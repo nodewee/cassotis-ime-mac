@@ -12,7 +12,7 @@ Version 1.0.0 (build 3) targets Apple Silicon and macOS 14 or later. Build and d
 | NSSecureTextField | ASCII input without IMK composition tested |
 | Chrome 154, Electron 44 and Terminal | Actual input and switching between applications tested |
 
-The frontend uses public InputMethodKit and AppKit APIs. Normal operation does not require Accessibility, Input Monitoring or event-posting permission.
+The frontend uses public InputMethodKit and AppKit APIs. Apart from the Chinese/English switch described below, normal operation does not require Accessibility, Input Monitoring or event-posting permission. Recording that switch as a bare Ctrl judges the tap from the raw HID layer and therefore needs Input Monitoring, which the settings window requests. A bare Shift, the default, keeps working without the permission through the event stream and only upgrades to the hardware judgement once it is granted, so an untouched installation never raises the request.
 
 Qualification includes normal and immediate-input cold launches through AppKit, WebKit and secure text fields, plus twelve browser/Terminal handoffs. Installed UI checks cover three-row paging, active-row digits, cross-row clicks, Tab completion, punctuation, mode feedback and settings autosave. Installation checks cover upgrade and download quarantine on the existing test host; this is not a clean-machine qualification.
 

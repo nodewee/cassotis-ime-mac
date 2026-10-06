@@ -3,6 +3,7 @@
 #import "InputSession.h"
 #import "CandidateAppearance.h"
 #import "ShortcutRecorder.h"
+#import "InputModeSwitchGesture.h"
 #import "RuntimeLog.h"
 
 @interface CassotisSettingsDocument : NSView
@@ -55,7 +56,7 @@
 @implementation CassotisSettingsController {
     NSPopUpButton *_scheme, *_dictionary, *_pageKeys, *_completionKey, *_pageSize, *_theme;
     NSSlider *_fontSize;
-    NSTextField *_fontSizeLabel, *_status;
+    NSTextField *_fontSizeLabel, *_status, *_gestureHint;
     NSButton *_fullWidth, *_punctuation, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates;
     NSComboBox *_fontFamily;
     NSArray<NSString *> *_fontFamilies;
@@ -244,6 +245,7 @@
         NSButton *enabled=[self check:actions[i] identifier:[NSString stringWithFormat:@"shortcut-enabled-%lu",(unsigned long)i]];
         enabled.tag=i; enabled.action=@selector(shortcutEnabledChanged:); [_shortcutEnabled addObject:enabled];
         CassotisShortcutRecorder *recorder=[[CassotisShortcutRecorder alloc] init]; recorder.target=self; recorder.action=@selector(changed:);
+        recorder.shortcutIndex=(NSInteger)i;
         recorder.accessibilityIdentifier=[NSString stringWithFormat:@"shortcut-%lu",(unsigned long)i]; recorder.accessibilityLabel=actions[i];
         [recorder.widthAnchor constraintEqualToConstant:220].active=YES;
         __weak CassotisSettingsController *weak=self;
@@ -259,8 +261,10 @@
     }
     _pageKeys=[self popup:@[@"− / =",@"[ / ]",@", / .",@"Shift + Tab / Tab"] identifier:@"candidate-page-keys"];
     _completionKey=[self popup:@[@"Tab",@"反引号 `"] identifier:@"completion-key"];
+    _gestureHint=[self hint:@""];
     [self section:@"快捷键" views:@[[self card:shortcutRows],
         [self hint:@"点击快捷键后直接按键。按住 Ctrl、Option 或 Shift 时会立即显示；单独的 Shift 在松开时完成录制。Esc 取消。"],
+        [self card:@[_gestureHint]],
         [self card:@[[self row:@"候选翻页" control:_pageKeys],[self row:@"一键补全" control:_completionKey]]],
         [self hint:@"Command、Ctrl + Space 和 Fn 系统组合键由 macOS 管理。系统输入源切换键可在“系统设置 → 键盘”中调整。"]]];
 
@@ -400,6 +404,23 @@
     _status.stringValue=@"日志设置已自动保存并生效。";
 }
 - (void)shortcutEnabledChanged:(NSButton *)sender { _shortcuts[sender.tag].enabled=sender.state==NSControlStateValueOn; [self changed:sender]; }
+- (void)updateGestureStatus {
+    if(!_gestureHint) return;
+    CassotisInputModeSwitchGesture *gesture=CassotisInputModeSwitchGesture.shared;
+    if(!gesture.singleTapModifier) {
+        _gestureHint.stringValue=@"把上面「中英文状态切换」录成单独 Shift 或单独 Ctrl 即可单击切换中英文。已授权「输入监控」时判定读取键盘硬件层，Shift+字母、Ctrl+C、修饰键+点击 都不会误切。";
+        return;
+    }
+    BOOL isShift=gesture.singleTapModifierKey==16;
+    NSString *name=isShift?@"Shift":@"Ctrl";
+    if([CassotisInputModeSwitchGesture hasInputMonitoringPermission]) {
+        _gestureHint.stringValue=[NSString stringWithFormat:@"已生效：单击 %@ 切换中英文（判定读键盘硬件层），只在言泉为当前输入源时生效。",name];
+        return;
+    }
+    _gestureHint.stringValue=isShift
+        ?@"现在可用（判定走事件流：终端等吞掉中间键的应用可能误切）。若在“系统设置 → 隐私与安全性 → 输入监控”中手动开启言泉，将改用键盘硬件层判定，不会再误切；言泉不会为此主动弹窗。"
+        :@"需要「输入监控」权限：请到“系统设置 → 隐私与安全性 → 输入监控”开启言泉，然后重新打开本设置窗口。单独 Ctrl 不提供会误判的降级判定。";
+}
 - (void)appearanceChanged:(id)sender { [self updatePreview]; [self changed:sender]; }
 - (CGFloat)selectedFontSize { return CassotisCandidateFontSizes()[(NSUInteger)llround(_fontSize.doubleValue)].doubleValue; }
 - (void)updatePreview {
@@ -453,6 +474,9 @@
             _shortcutEnabled[i].state=_state.shortcuts[i].disabled?0:1;
             _shortcuts[i].shortcut=_state.shortcuts[i]; _shortcuts[i].enabled=!_state.shortcuts[i].disabled;
         }
+        [CassotisInputModeSwitchGesture.shared applyInputModeShortcutKey:_state.shortcuts[0].key
+            modifiers:_state.shortcuts[0].modifiers disabled:_state.shortcuts[0].disabled];
+        [self updateGestureStatus];
         _status.stringValue=@"所有词库学习和模型推理均在本机进行。";
     } catch(const std::exception &e) { _status.stringValue=[NSString stringWithUTF8String:e.what()]; }
     NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
@@ -504,7 +528,7 @@
     for(int i=0;i<5;++i) {
         if(_shortcuts[i].recording) { _status.stringValue=@"请先完成快捷键录制，或按 Esc 取消。"; return NO; }
         state.shortcuts[i]=_shortcuts[i].shortcut; state.shortcuts[i].disabled=!_shortcutEnabled[i].state;
-        NSString *error=CassotisShortcutValidationError(state.shortcuts[i]);
+        NSString *error=CassotisShortcutValidationError(state.shortcuts[i],(NSInteger)i);
         if(error) { _status.stringValue=error; return NO; }
         for(int j=0;j<i;++j) if(!state.shortcuts[i].disabled && !state.shortcuts[j].disabled &&
             state.shortcuts[i].key==state.shortcuts[j].key && state.shortcuts[i].modifiers==state.shortcuts[j].modifiers) {
@@ -518,11 +542,23 @@
         cassotis::EngineClient engine;
         if(!engine.connect(CassotisSocketPath().UTF8String)) throw std::runtime_error("引擎暂不可用，设置尚未保存。");
         engine.setState(state); _state=state;
+        CassotisInputModeSwitchGesture *gesture=CassotisInputModeSwitchGesture.shared;
+        [gesture applyInputModeShortcutKey:state.shortcuts[0].key modifiers:state.shortcuts[0].modifiers
+            disabled:state.shortcuts[0].disabled];
+        if(gesture.singleTapModifier && gesture.singleTapModifierKey==17 &&
+           ![CassotisInputModeSwitchGesture hasInputMonitoringPermission])
+            [CassotisInputModeSwitchGesture requestInputMonitoringPermission];
         NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
         [defaults setInteger:_theme.indexOfSelectedItem forKey:@"CandidateTheme"];
         [defaults setDouble:[self selectedFontSize] forKey:@"CandidateFontSize"];
         [defaults setObject:_fontFamily.stringValue forKey:@"CandidateFontFamily"];
-        _status.stringValue=@"设置已自动保存。"; [self updatePreview]; return YES;
+        [self updateGestureStatus];
+        BOOL needsPermission=gesture.singleTapModifier && gesture.singleTapModifierKey==17 &&
+            ![CassotisInputModeSwitchGesture hasInputMonitoringPermission];
+        _status.stringValue=needsPermission
+            ?@"已保存。「单独 Ctrl」切换中英文需要「输入监控」权限：请在“系统设置 → 隐私与安全性 → 输入监控”中允许言泉。"
+            :@"设置已自动保存。";
+        [self updatePreview]; return YES;
     } catch(const std::exception &e) { _status.stringValue=[NSString stringWithUTF8String:e.what()]; return NO; }
 }
 - (void)retry:(id)sender {

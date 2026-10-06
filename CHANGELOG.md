@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Allow the Chinese/English switch shortcut to be recorded as a bare Shift (the default) or a bare Ctrl. When Input Monitoring is granted the judgement is read from the keyboard hardware layer (IOHIDManager), so Shift+Enter, Ctrl+C, Shift+click and Ctrl+click are never mistaken for a single tap and a key swallowed by the frontmost app cannot switch modes either. Without the permission a bare Shift keeps working through the event stream (terminals may misfire, as before) and a bare Ctrl stays inert rather than falling back to a judgement that can misfire. Only the Chinese/English action accepts a bare modifier; CapsLock is left entirely to macOS.
+
 ## 1.0.0 (build 3)
 
 - Align the engine, dictionaries and deployed models with Windows / Cassotis Lexicon v1.31.0.

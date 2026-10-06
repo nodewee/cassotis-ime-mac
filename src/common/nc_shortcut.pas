@@ -395,8 +395,15 @@ begin
     if (normalized_key = VK_SHIFT) or (normalized_key = VK_CONTROL) or
         (normalized_key = VK_MENU) then
     begin
-        if (normalized_key = VK_SHIFT) and (not shortcut.shift_down) and
-            (not shortcut.ctrl_down) and (not shortcut.alt_down) then
+        // A bare Shift is executed by the input event stream on release; a bare
+        // Ctrl is judged and executed on the macOS side from the raw HID layer
+        // (the event stream cannot see a key the frontmost app swallows, so it
+        // cannot tell a single Ctrl tap from Ctrl+C). A bare Option takes part in
+        // dead keys and special-character input, so it stays rejected. Validity is
+        // decided here only; the frontend owns the execution path.
+        if ((normalized_key = VK_SHIFT) or (normalized_key = VK_CONTROL)) and
+            (not shortcut.shift_down) and (not shortcut.ctrl_down) and
+            (not shortcut.alt_down) then
         begin
             Exit(svi_none);
         end;

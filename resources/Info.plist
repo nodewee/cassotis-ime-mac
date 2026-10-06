@@ -11,6 +11,7 @@
     <key>CFBundleVersion</key><string>3</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSBackgroundOnly</key><true/>
+    <key>NSInputMonitoringUsageDescription</key><string>言泉读取键盘的修饰键状态，用于识别「单独 Shift / 单独 Ctrl」切换中英文，并排除 Shift+Enter、Ctrl+C 等组合键。不记录、不保存、不外传任何按键内容。</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHumanReadableCopyright</key><string>GPL-3.0 License</string>

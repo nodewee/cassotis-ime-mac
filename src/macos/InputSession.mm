@@ -1,4 +1,5 @@
 #import "InputSession.h"
+#import "InputModeSwitchGesture.h"
 #import "SettingsController.h"
 #import "ProductName.h"
 #import "RuntimeLog.h"
@@ -118,6 +119,20 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
         case '\'':case '"':return 0xde;default:return 0;
     }
 }
+// When the Chinese/English action is a bare Shift or Ctrl the judgement moves to
+// the raw HID layer (see InputModeSwitchGesture), which is the only place that
+// can see a key the frontmost application swallows. Returns that modifier's
+// special code in CassotisTranslateKey (20 = Shift, 21 = Ctrl), or 0 otherwise.
+static int CassotisInputModeBareModifierSpecial(const cassotis::Shortcut &s) {
+    if(s.disabled || s.modifiers!=0) return 0;
+    if(s.key==16) return 20;
+    if(s.key==17) return 21;
+    return 0;
+}
+@interface CassotisInputSession ()
+- (void)showInputMode:(uint8_t)mode;
+@end
+
 @implementation CassotisInputSession {
     std::unique_ptr<cassotis::EngineClient> _engine;
     cassotis::Result _result;
@@ -188,6 +203,9 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     try {
         _engine->active(true);
         auto state=_engine->state(); _panel.completionKey=state.completionKey;
+        const auto &modeShortcut=state.shortcuts[0];
+        [CassotisInputModeSwitchGesture.shared applyInputModeShortcutKey:modeShortcut.key
+            modifiers:modeShortcut.modifiers disabled:modeShortcut.disabled];
         _inputMode=state.mode; _modeKnown=YES;
         _modeFeedbackDeadline=NSProcessInfo.processInfo.systemUptime+0.4;
         return YES;
@@ -367,6 +385,12 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
 }
 - (BOOL)handleEvent:(NSEvent *)event {
     if(!_active) return NO;
+    // IMK also delivers other NSEvent types here, such as mouse drags. Reading
+    // keyCode from a non-key event raises NSInternalInconsistencyException and
+    // breaks the input connection, so filter by type first.
+    if(event.type!=NSEventTypeKeyDown && event.type!=NSEventTypeKeyUp &&
+       event.type!=NSEventTypeFlagsChanged && event.type!=NSEventTypeLeftMouseDown &&
+       event.type!=NSEventTypeRightMouseDown) return NO;
     // Ordinary releases do not change input state. Sending them as a new
     // generation would invalidate completion queued by the matching keyDown.
     // Modifier-only shortcuts are handled by flagsChanged below.
@@ -419,7 +443,20 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
             [self commit]; [self cancelModifierGesture]; return NO;
         }
         const auto &settings=state.shortcuts[4];
+        const auto &modeShortcut=state.shortcuts[0];
         uint16_t vk=CassotisShortcutKey(key);
+        // A bare Shift or Ctrl Chinese/English action is judged at the raw HID
+        // layer, the only place that can see a key the frontmost application
+        // swallows. When the monitor is unavailable the two differ, and the
+        // fallback cannot be swapped:
+        //   bare Shift - yield to the event stream: it is the default shortcut and
+        //   must keep working without permission, exactly as before;
+        //   bare Ctrl - swallow the event: it has no fallback that would not misfire.
+        [CassotisInputModeSwitchGesture.shared applyInputModeShortcutKey:modeShortcut.key
+            modifiers:modeShortcut.modifiers disabled:modeShortcut.disabled];
+        int bareModifier=CassotisInputModeBareModifierSpecial(modeShortcut);
+        if(bareModifier!=0 && key.special==bareModifier &&
+           (CassotisInputModeSwitchGesture.shared.monitoring || bareModifier==21)) return YES;
         BOOL modifierOnly=settings.modifiers==0 && settings.key>=16 && settings.key<=18;
         if(release && _settingsGesture && settings.key==vk) {
             _settingsGesture=NO; [self commit]; [self showSettings]; return YES;
@@ -438,7 +475,6 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
         else if(event.type==NSEventTypeKeyDown) [self commit];
         // Read the authoritative new mode only for the configured mode key;
         // ordinary typing adds no state RPC or work to the input path.
-        const auto &modeShortcut=state.shortcuts[0];
         if(_active && self.client==eventClient && _engine->connected() &&
            !modeShortcut.disabled && !key.repeat && vk==modeShortcut.key) {
             auto mode=_engine->state().mode;
@@ -543,3 +579,25 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     [CassotisSettingsController.shared showWindow:nil];
 }
 @end
+
+// Entry point for a bare-modifier switch.
+// activeSession cannot be trusted here: the system may skip the activation
+// notification and leave it nil while Cassotis is still the current input
+// source, so ask the system directly.
+static BOOL CassotisIsCurrentInputSource(void) {
+    TISInputSourceRef source=TISCopyCurrentKeyboardInputSource();
+    if(!source) return NO;
+    NSString *bundle=(__bridge NSString *)TISGetInputSourceProperty(source,kTISPropertyBundleID);
+    BOOL ours=[bundle isEqualToString:@"org.cassotis.inputmethod.Cassotis"];
+    CFRelease(source);
+    return ours;
+}
+void CassotisToggleInputModeFromGesture(void) {
+    if(!CassotisIsCurrentInputSource()) return;
+    try {
+        cassotis::EngineClient control;
+        if(!control.connect(utf8(CassotisSocketPath()))) { CassotisStartEngine(); return; }
+        auto state=control.state(); state.mode^=1; control.setState(state);
+        if(activeSession) [activeSession showInputMode:state.mode];
+    } catch(...) { /* engine not reachable: do nothing, never disturb typing */ }
+}

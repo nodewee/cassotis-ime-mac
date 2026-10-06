@@ -5,6 +5,9 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *CassotisSocketPath(void);
 FOUNDATION_EXPORT void CassotisStartEngine(void);
 FOUNDATION_EXPORT void CassotisStopEngine(void);
+// Entry point for a bare-modifier switch: toggles only when Cassotis is the
+// current input source.
+FOUNDATION_EXPORT void CassotisToggleInputModeFromGesture(void);
 cassotis::Key CassotisTranslateKey(NSEvent *event, BOOL release);
 uint16_t CassotisShortcutKey(const cassotis::Key &key);
 BOOL CassotisClientCaretRect(id client, NSRect *rect);

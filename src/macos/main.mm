@@ -3,6 +3,7 @@
 #import <os/log.h>
 #import "InputSession.h"
 #import "SettingsController.h"
+#import "InputModeSwitchGesture.h"
 #import "ProductName.h"
 
 static void CassotisShowAboutPanel(void) {
@@ -85,6 +86,10 @@ static void CassotisShowAboutPanel(void) {
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     (void)notification; CassotisStartEngine();
+    // Recording the Chinese/English action as a bare Shift or Ctrl in the shortcut settings enables this tap handler.
+    CassotisInputModeSwitchGesture.shared.tapHandler = ^{
+        CassotisToggleInputModeFromGesture();
+    };
     if([NSProcessInfo.processInfo.arguments containsObject:@"--settings"])
         [CassotisSettingsController.shared showWindow:nil];
     else if([NSProcessInfo.processInfo.arguments containsObject:@"--about"])

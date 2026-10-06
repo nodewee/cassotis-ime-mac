@@ -34,13 +34,22 @@ NSString *CassotisShortcutDescription(const cassotis::Shortcut &s) {
     NSString *key=keyName(s.key); if(key.length) [names addObject:key];
     return [names componentsJoinedByString:@" + "];
 }
-NSString *CassotisShortcutValidationError(const cassotis::Shortcut &s) {
+NSString *CassotisShortcutValidationError(const cassotis::Shortcut &s, NSInteger shortcutIndex) {
     if(s.disabled) return nil;
     if(s.modifiers&~7) return @"Command 和 Fn 组合键由 macOS 管理，请选择 Ctrl、Option 或 Shift。";
     if(s.key==32 && (s.modifiers&2)) return @"Ctrl + Space 组合键保留给 macOS 切换输入源。";
-    if(s.key>=16 && s.key<=18) return s.key==16 && !s.modifiers?nil:@"单独的修饰键仅支持 Shift；请再按一个字母或功能键。";
+    if(s.key>=16 && s.key<=18) {
+        if(!s.modifiers) {
+            if(s.key==16) return nil;
+            // A bare Ctrl needs the Input Monitoring permission and is available
+            // only for the Chinese/English switch: its judgement moves to the raw
+            // HID layer (see InputModeSwitchGesture) and no other action has that path.
+            if(s.key==17 && shortcutIndex==0) return nil;
+        }
+        return @"单独的修饰键仅支持 Shift；中英文状态切换还支持单独 Ctrl。";
+    }
     if(!keyName(s.key).length || (!s.modifiers && !(s.key>=0x70 && s.key<=0x83)))
-        return @"请使用 Ctrl、Option、Shift 组合键，F1–F20，或单独的 Shift。";
+        return @"请使用 Ctrl、Option、Shift 组合键，F1–F20，或单独的 Shift / Ctrl。";
     return nil;
 }
 
@@ -58,6 +67,7 @@ NSString *CassotisShortcutValidationError(const cassotis::Shortcut &s) {
         self.toolTip=@"点击后直接按快捷键；Esc 取消，Tab 移至下一项。";
         self.accessibilityRole=NSAccessibilityButtonRole;
         self.accessibilityElement=YES;
+        _shortcutIndex=-1;
         _displayString=@"点击录制快捷键";
     }
     return self;
@@ -108,7 +118,7 @@ NSString *CassotisShortcutValidationError(const cassotis::Shortcut &s) {
     [self.window makeFirstResponder:self]; [self beginRecording]; return YES;
 }
 - (void)accept:(cassotis::Shortcut)value {
-    NSString *error=CassotisShortcutValidationError(value);
+    NSString *error=CassotisShortcutValidationError(value,_shortcutIndex);
     if(error) { if(self.validationMessage) self.validationMessage(error); return; }
     _shortcut=value; [self cancelRecording];
     if(self.validationMessage) self.validationMessage(@"快捷键已录制。" );
@@ -122,6 +132,8 @@ NSString *CassotisShortcutValidationError(const cassotis::Shortcut &s) {
     if(flags) [self display:[modifierNames(flags) componentsJoinedByString:@" + "]];
     else if(_gestureFlags==NSEventModifierFlagShift && (event.keyCode==kVK_Shift || event.keyCode==kVK_RightShift)) {
         [self accept:{16,0,false}];
+    } else if(_gestureFlags==NSEventModifierFlagControl && (event.keyCode==kVK_Control || event.keyCode==kVK_RightControl)) {
+        [self accept:{17,0,false}];
     } else if(_gestureFlags) {
         _gestureFlags=0;
         [self display:@"请按组合键…"];
