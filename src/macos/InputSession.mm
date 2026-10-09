@@ -367,6 +367,12 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
 }
 - (BOOL)handleEvent:(NSEvent *)event {
     if(!_active) return NO;
+    // IMK also delivers other NSEvent types here, such as mouse drags. Reading
+    // keyCode from a non-key event raises NSInternalInconsistencyException and
+    // breaks the input connection, so filter by type first.
+    if(event.type!=NSEventTypeKeyDown && event.type!=NSEventTypeKeyUp &&
+       event.type!=NSEventTypeFlagsChanged && event.type!=NSEventTypeLeftMouseDown &&
+       event.type!=NSEventTypeRightMouseDown) return NO;
     // Ordinary releases do not change input state. Sending them as a new
     // generation would invalidate completion queued by the matching keyDown.
     // Modifier-only shortcuts are handled by flagsChanged below.

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Ignore non-key events delivered to the input method's `handleEvent:`, where reading `keyCode` from a mouse drag raised an exception and broke the input connection.
+
 ## 1.0.0 (build 3)
 
 - Align the engine, dictionaries and deployed models with Windows / Cassotis Lexicon v1.31.0.
