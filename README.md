@@ -33,7 +33,7 @@ Version **1.0.0** (build **3**) supports Apple Silicon and macOS 14 or later. Se
 - A two-row candidate window by default, with optional expansion to three candidate rows while paging: up to nine candidates per row, an always-present Tab completion row, and the logo and version at the bottom right. Learned words can be deleted using the small red × beside them.
 - A native candidate window and settings interface, horizontal candidate rows without wrapping, a default font size of 14 points, eight color options, and a live preview. The candidate window keeps focus in the application receiving input.
 - A brief animated bubble beside the caret shows the Cassotis logo beside “中” (Chinese) or “英” (English), avoids nearby system cursor indicators, and appears when changing modes or switching from another input method to Cassotis. It dismisses when typing starts.
-- Settings categories in a sidebar, font-name completion, and direct key recording for five configurable shortcuts. Confirmed choices save automatically; macOS system shortcuts and secure password fields retain their normal behavior.
+- Settings categories in a sidebar, font-name completion, and direct key recording for five configurable shortcuts. Each application remembers its own Chinese/English mode by default. Confirmed choices save automatically; macOS system shortcuts and secure password fields retain their normal behavior.
 - Joint local sentence repair with bilateral verification, repaired-prefix reuse for Tab completions, and stable candidates while typing or deleting incomplete initials.
 - Correct Ziguang `sh` / `zh` / `ch` decoding (`song` / `zong` / `cong`), conservative diagnostics for invalid Pinyin and repeated vowels, with red error ranges in the candidate footer, and simplified/traditional display of shared learned words.
 - Five-syllable decoding, stricter pronunciation checks for cached paths, and prefix ranking that respects repeated choices.
@@ -115,7 +115,7 @@ export CASSOTIS_LEXICON_ROOT="/path/to/cassotis-lexicon"
 
 The application is built at `build/arm64/Cassotis.app` and installed to `~/Library/Input Methods/Cassotis.app`. Add 言泉输入法 under System Settings → Keyboard → Text Input, then select it from the input menu. If the input-source list does not refresh, log out and log back in.
 
-By default, Shift switches between Chinese and English input, Space or a number selects a candidate, Tab accepts a completion, and Ctrl+Shift+F10 opens settings. See [CONFIGURATION.md](CONFIGURATION.md) for the full key bindings and data locations.
+By default, Shift switches between Chinese and English input, Space or a number selects a candidate, Tab accepts a completion, and Ctrl+Shift+F10 opens settings. Each application remembers its own Chinese/English mode by default (Settings → General); an application that was never switched in inherits the current mode. See [CONFIGURATION.md](CONFIGURATION.md) for the full key bindings and data locations.
 
 `./rebuild_all.sh` cleans the build output and performs a complete rebuild. `./uninstall.sh` removes the current user's input method while preserving learned words. See [BUILD.md](BUILD.md) for build prerequisites, model downloads, dictionary imports, packaging, and signing. Builds use a local ad hoc signature by default.
 

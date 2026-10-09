@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Remember the Chinese/English mode per application. With the default-on "remember per application" preference in Settings → General, each application keeps the mode the user last chose there and restores it when that application becomes active again; an application that was never switched in inherits the current mode, and turning the preference off returns to one global mode. The memory lives in the input method's UserDefaults and survives a restart. Behaviour only, no engine or protocol change.
+
 ## 1.0.0 (build 3)
 
 - Align the engine, dictionaries and deployed models with Windows / Cassotis Lexicon v1.31.0.
