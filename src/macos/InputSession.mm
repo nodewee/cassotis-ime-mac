@@ -4,6 +4,8 @@
 #import "RuntimeLog.h"
 #import <InputMethodKit/InputMethodKit.h>
 #import <Carbon/Carbon.h>
+#import <os/log.h>
+#include <algorithm>
 #include <memory>
 #include <sys/stat.h>
 #include <signal.h>
@@ -118,6 +120,78 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
         case '\'':case '"':return 0xde;default:return 0;
     }
 }
+// IMK never delivers a key or click that the frontmost application consumed
+// itself, so a chord such as Shift+Return in a terminal looks like a bare
+// modifier tap. These Quartz counters still record that input, as counts and
+// times only, and need no privacy permission. Scrolling is left out because
+// trackpad momentum continues after the fingers lift.
+static CassotisInputActivity systemInputActivity(NSTimeInterval now) {
+    static const CGEventType inputs[]={kCGEventKeyDown,kCGEventLeftMouseDown,
+        kCGEventRightMouseDown,kCGEventOtherMouseDown};
+    const auto source=kCGEventSourceStateCombinedSessionState;
+    auto counts=[&] {
+        std::pair<uint32_t,uint32_t> n{0,CGEventSourceCounterForEventType(source,kCGEventFlagsChanged)};
+        for(auto type:inputs) n.first+=CGEventSourceCounterForEventType(source,type);
+        return n;
+    };
+    CassotisInputActivity a;
+    // An event arriving between the reads would pair an old count with its new
+    // time. Read again until the counts on both sides of the times agree.
+    for(int attempt=0;attempt<3;++attempt) {
+        const auto before=counts(); a.inputs=before.first; a.modifiers=before.second; a.lastInput=0;
+        for(auto type:inputs)
+            a.lastInput=std::max(a.lastInput,now-CGEventSourceSecondsSinceLastEventType(source,type));
+        a.lastModifier=now-CGEventSourceSecondsSinceLastEventType(source,kCGEventFlagsChanged);
+        if((a.steady=before==counts())) break;
+    }
+    return a;
+}
+CassotisInputActivity (*CassotisInputActivitySource)(NSTimeInterval)=systemInputActivity;
+// A synthetic event may carry no usable timestamp; judge it from when it is handled.
+static NSTimeInterval eventTime(NSTimeInterval timestamp, NSTimeInterval now) {
+    return timestamp>now-10 && timestamp<=now?timestamp:now;
+}
+// The counters time a modifier change a few milliseconds before its NSEvent
+// timestamp. Any other modifier time belongs to a different change, which
+// hides when this one was counted.
+static NSTimeInterval countedTime(NSTimeInterval event, NSTimeInterval lastModifier, NSTimeInterval hidden) {
+    return lastModifier<=event && lastModifier>=event-0.05?lastModifier:hidden;
+}
+CassotisModifierTap CassotisBeginModifierTap(const CassotisInputActivity &earlier, const CassotisInputActivity &a,
+    NSTimeInterval pressed, NSTimeInterval now) {
+    CassotisModifierTap tap; pressed=eventTime(pressed,now);
+    // The press itself must appear in the counters. Otherwise they are
+    // unusable, or the event did not pass through the window server.
+    tap.watched=a.steady && a.modifiers && a.lastModifier>=pressed-0.05;
+    // Whether input already counted here belongs to the hold is decided at
+    // the release: a delayed handler may run after the release and the
+    // keystroke that followed it. A hidden press is assumed to have been
+    // counted early, so that input just before it is not ruled out.
+    tap.pressed=countedTime(pressed,a.lastModifier,pressed-0.02); tap.handled=now;
+    tap.inputs=a.inputs; tap.lastInput=a.lastInput;
+    // An earlier sample without input since the press shows how many inputs
+    // this one adds to it. Only the time of the last of them is known.
+    tap.single=earlier.steady && earlier.lastInput<tap.pressed && a.inputs-earlier.inputs==1;
+    return tap;
+}
+BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const CassotisInputActivity &a,
+    NSTimeInterval released, NSTimeInterval now) {
+    if(!tap.watched) return NO;
+    released=eventTime(released,now);
+    const NSTimeInterval end=countedTime(released,a.lastModifier,released);
+    // Input already counted when the press was handled interrupts the tap. A
+    // handler delayed past the release may also have counted the keystroke
+    // that followed, which hides the time of any input before it. Only an
+    // earlier sample can show that this keystroke was the single input.
+    if(tap.lastInput>=tap.pressed) return !(tap.single && tap.lastInput>end);
+    // A press handled after the release had every input of the hold in its
+    // baseline, so whatever was counted later followed the release.
+    if(tap.handled>=released) return NO;
+    uint32_t inputs=a.inputs-tap.inputs;
+    // One input after the release is the next keystroke, counted before this
+    // handler ran. A count that may not match its time cannot show that.
+    return inputs && !(inputs==1 && a.steady && a.lastInput>end);
+}
 @implementation CassotisInputSession {
     std::unique_ptr<cassotis::EngineClient> _engine;
     cassotis::Result _result;
@@ -129,6 +203,8 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     NSTimer *_timer;
     BOOL _active, _committing, _settingsGesture;
     NSUInteger _modifiers;
+    CassotisModifierTap _tap;
+    CassotisInputActivity _seen;
     NSUInteger _pollAttempts;
     std::vector<cassotis::Key> _startupKeys;
     NSString *_startupText, *_startupContext;
@@ -213,7 +289,7 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     if(activeSession && activeSession!=self) [activeSession deactivate];
     if(_active && self.client!=client) [self deactivate];
     activeSession=self;
-    self.client=client; _active=YES; _modifiers=0; _settingsGesture=NO;
+    self.client=client; _active=YES; _modifiers=0; _tap={}; _settingsGesture=NO;
     if(newActivation) { _modeKnown=NO; _modeFeedbackPending=YES; }
     [self ensureReady]; [self presentModeFeedback];
     [_timer invalidate]; __weak CassotisInputSession *weak=self;
@@ -365,6 +441,24 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     try { if(_engine->connected()) { cassotis::Key cancel; _engine->key(cancel); } }
     catch(...) { _engine->disconnect(); }
 }
+- (void)watchModifierTap:(NSEvent *)event release:(BOOL)release {
+    const NSUInteger held=_modifiers&(NSEventModifierFlagShift|NSEventModifierFlagControl|
+        NSEventModifierFlagOption|NSEventModifierFlagCommand);
+    NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
+    auto activity=CassotisInputActivitySource(now);
+    // Keep the earliest baseline while any modifier remains held.
+    if(!release && !held) _tap=CassotisBeginModifierTap(_seen,activity,event.timestamp,now);
+    _seen=activity;
+    if(!release) return;
+    BOOL interrupted=CassotisModifierTapInterrupted(_tap,activity,event.timestamp,now);
+    // Opt-in diagnostics record counts and timings, never input.
+    if(getenv("CASSOTIS_TRACE_INPUT"))
+        os_log(OS_LOG_DEFAULT,"Cassotis modifier-tap watched=%d interrupted=%d inputs=%u steady=%d lag=%.1fms skew=%.1fms",
+            _tap.watched,interrupted,activity.inputs-_tap.inputs,activity.steady,(now-event.timestamp)*1000,
+            (activity.lastModifier-event.timestamp)*1000);
+    // The release still reaches the engine below to end its pending shortcut.
+    if(interrupted) [self cancelModifierGesture];
+}
 - (BOOL)handleEvent:(NSEvent *)event {
     if(!_active) return NO;
     // IMK also delivers other NSEvent types here, such as mouse drags. Reading
@@ -377,6 +471,10 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
     // generation would invalidate completion queued by the matching keyDown.
     // Modifier-only shortcuts are handled by flagsChanged below.
     if(event.type==NSEventTypeKeyUp) return NO;
+    // A modifier press handled late compares the counters with those read
+    // for the event before it.
+    if(event.type!=NSEventTypeFlagsChanged)
+        _seen=CassotisInputActivitySource(NSProcessInfo.processInfo.systemUptime);
     if(event.type==NSEventTypeKeyDown || event.type==NSEventTypeLeftMouseDown ||
        event.type==NSEventTypeRightMouseDown) [self cancelModeFeedback];
     if(event.type==NSEventTypeLeftMouseDown || event.type==NSEventTypeRightMouseDown) {
@@ -395,6 +493,7 @@ uint16_t CassotisShortcutKey(const cassotis::Key &k) {
         }
         release=!(event.modifierFlags&bit);
         if(release && !(_modifiers&bit)) { _modifiers=event.modifierFlags; return NO; }
+        [self watchModifierTap:event release:release];
         _modifiers=event.modifierFlags;
     }
     auto key=CassotisTranslateKey(event,release);

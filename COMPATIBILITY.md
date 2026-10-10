@@ -12,7 +12,7 @@ Version 1.0.0 (build 3) targets Apple Silicon and macOS 14 or later. Build and d
 | NSSecureTextField | ASCII input without IMK composition tested |
 | Chrome 154, Electron 44 and Terminal | Actual input and switching between applications tested |
 
-The frontend uses public InputMethodKit and AppKit APIs. Normal operation does not require Accessibility, Input Monitoring or event-posting permission.
+The frontend uses public InputMethodKit and AppKit APIs. Normal operation does not require Accessibility, Input Monitoring or event-posting permission. To notice a key or click that the frontmost application consumed while a modifier was held, modifier-only shortcuts compare system-wide event counts and times from public Quartz event-source counters; these reveal no key contents.
 
 Qualification includes normal and immediate-input cold launches through AppKit, WebKit and secure text fields, plus twelve browser/Terminal handoffs. Installed UI checks cover three-row paging, active-row digits, cross-row clicks, Tab completion, punctuation, mode feedback and settings autosave. Installation checks cover upgrade and download quarantine on the existing test host; this is not a clean-machine qualification.
 

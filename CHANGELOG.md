@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Ignore non-key events delivered to the input method's `handleEvent:`, where reading `keyCode` from a mouse drag raised an exception and broke the input connection.
+- Cancel a modifier-only shortcut, such as the bare Shift Chinese/English switch, when a key or mouse button was pressed while the modifier was held, including input the frontmost application consumed before the input method saw it (for example Shift+Return in some terminals). The frontend compares system-wide event counts and times around the press and release; it reads no key contents and needs no privacy permission, and keeps the previous behavior when the counters are unavailable. When events are handled late and the counters cannot show whether input fell inside the hold, the shortcut is cancelled.
 
 ## 1.0.0 (build 3)
 
