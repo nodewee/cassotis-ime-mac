@@ -19,6 +19,26 @@ FOUNDATION_EXPORT void CassotisSetRememberInputModeEnabled(BOOL enabled);
 FOUNDATION_EXPORT void CassotisRememberInputModeForFrontmostApplication(uint8_t mode);
 cassotis::Key CassotisTranslateKey(NSEvent *event, BOOL release);
 uint16_t CassotisShortcutKey(const cassotis::Key &key);
+// System-wide counts and latest times of key and mouse-button presses (inputs)
+// and of modifier changes. Times are in system uptime, like NSEvent timestamps.
+// steady is NO when events kept arriving between the reads, so that a count
+// may not match its time.
+struct CassotisInputActivity {
+    uint32_t inputs=0, modifiers=0;
+    NSTimeInterval lastInput=0, lastModifier=0;
+    BOOL steady=YES;
+};
+struct CassotisModifierTap {
+    BOOL watched=NO, single=NO; uint32_t inputs=0;
+    NSTimeInterval pressed=0, handled=0, lastInput=0;
+};
+extern CassotisInputActivity (*CassotisInputActivitySource)(NSTimeInterval now);
+// earlier is the newest sample read before this modifier event was handled.
+// A sample never read is all zeros, which is what the counters were at login.
+CassotisModifierTap CassotisBeginModifierTap(const CassotisInputActivity &earlier,
+    const CassotisInputActivity &activity, NSTimeInterval pressed, NSTimeInterval now);
+BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const CassotisInputActivity &activity,
+    NSTimeInterval released, NSTimeInterval now);
 BOOL CassotisClientCaretRect(id client, NSRect *rect);
 NSRect CassotisPanelFrameAtCaret(NSRect caret, NSSize size, NSRect visible);
 NSRect CassotisInputModeFrameAtCaret(NSRect caret, NSSize size, NSRect visible,
