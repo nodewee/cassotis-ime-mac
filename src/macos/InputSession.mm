@@ -586,6 +586,10 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         [self commit];
     }
     if(![self ensureReady]) return [self queueStartupKey:key];
+    // The engine can become ready here rather than in tick, so a key arriving
+    // before the next timer callback must not be read in the mode the previous
+    // application left behind.
+    [self restoreRememberedInputModeIfPending];
     try {
         auto state=_engine->state();
         // Match an explicitly configured Option chord against the unmodified
