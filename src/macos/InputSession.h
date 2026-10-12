@@ -5,6 +5,18 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *CassotisSocketPath(void);
 FOUNDATION_EXPORT void CassotisStartEngine(void);
 FOUNDATION_EXPORT void CassotisStopEngine(void);
+// The engine keeps one process-wide Chinese/English mode. The frontend
+// remembers the mode the user last chose in each application and restores it
+// when that application becomes active again. Preferences live in the input
+// method's UserDefaults; absent means enabled, so existing installations get
+// the behaviour without a migration step.
+FOUNDATION_EXPORT NSString *const CassotisInputModeByApplicationKey;
+FOUNDATION_EXPORT NSString *const CassotisRememberInputModeKey;
+FOUNDATION_EXPORT BOOL CassotisRememberInputModeEnabled(void);
+FOUNDATION_EXPORT void CassotisSetRememberInputModeEnabled(BOOL enabled);
+// Records the mode for the application that is frontmost right now; used by
+// switch paths that run without an active input session.
+FOUNDATION_EXPORT void CassotisRememberInputModeForFrontmostApplication(uint8_t mode);
 cassotis::Key CassotisTranslateKey(NSEvent *event, BOOL release);
 uint16_t CassotisShortcutKey(const cassotis::Key &key);
 // System-wide counts and latest times of key and mouse-button presses (inputs)

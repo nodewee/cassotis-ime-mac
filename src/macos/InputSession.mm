@@ -56,6 +56,47 @@ void CassotisStartEngine(void) {
         [CassotisRuntimeLog.shared appendData:[message dataUsingEncoding:NSUTF8StringEncoding]];
     }
 }
+// Per-application Chinese/English memory. The engine keeps one process-wide
+// mode; the frontend remembers the mode the user last chose in each
+// application and restores it when that application becomes active again.
+// Stored in the input method's UserDefaults so it survives a restart of the
+// frontend or the system. An absent switch means enabled, so an existing
+// installation gets the behaviour without a migration step.
+NSString *const CassotisInputModeByApplicationKey=@"InputModeByApplication";
+NSString *const CassotisRememberInputModeKey=@"RememberInputModePerApplication";
+BOOL CassotisRememberInputModeEnabled(void) {
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    if([defaults objectForKey:CassotisRememberInputModeKey]==nil) return YES;
+    return [defaults boolForKey:CassotisRememberInputModeKey];
+}
+void CassotisSetRememberInputModeEnabled(BOOL enabled) {
+    [NSUserDefaults.standardUserDefaults setBool:enabled forKey:CassotisRememberInputModeKey];
+}
+static BOOL CassotisRememberedInputMode(NSString *bundle, uint8_t *mode) {
+    if(!bundle.length) return NO;
+    NSDictionary *table=[NSUserDefaults.standardUserDefaults dictionaryForKey:CassotisInputModeByApplicationKey];
+    NSNumber *value=table[bundle];
+    if(![value isKindOfClass:NSNumber.class]) return NO;
+    NSInteger stored=value.integerValue;
+    if(stored<0 || stored>1) return NO;
+    *mode=(uint8_t)stored;
+    return YES;
+}
+static void CassotisStoreRememberedInputMode(NSString *bundle, uint8_t mode) {
+    if(!bundle.length) return;
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    NSMutableDictionary *table=[NSMutableDictionary dictionary];
+    NSDictionary *existing=[defaults dictionaryForKey:CassotisInputModeByApplicationKey];
+    if([existing isKindOfClass:NSDictionary.class]) [table addEntriesFromDictionary:existing];
+    NSNumber *value=table[bundle];
+    if([value isKindOfClass:NSNumber.class] && value.integerValue==(NSInteger)mode) return;
+    table[bundle]=@(mode);
+    [defaults setObject:table forKey:CassotisInputModeByApplicationKey];
+}
+void CassotisRememberInputModeForFrontmostApplication(uint8_t mode) {
+    if(!CassotisRememberInputModeEnabled()) return;
+    CassotisStoreRememberedInputMode(NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier,mode);
+}
 static unsigned char unshiftedNumber(unsigned char c, uint32_t modifiers) {
     if(modifiers&1) {
         const std::string symbols=")!@#$%^&*(";
@@ -201,7 +242,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     uint8_t _inputMode;
     NSTimeInterval _modeFeedbackDeadline;
     NSTimer *_timer;
-    BOOL _active, _committing, _settingsGesture;
+    BOOL _active, _committing, _settingsGesture, _restorePending;
     NSUInteger _modifiers;
     CassotisModifierTap _tap;
     CassotisInputActivity _seen;
@@ -256,7 +297,42 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     if(!_active) return;
     _inputMode=mode; _modeKnown=YES; _modeFeedbackPending=YES;
     _modeFeedbackDeadline=NSProcessInfo.processInfo.systemUptime+0.4;
+    // Reached only when the user changed the mode, never when an application
+    // inherits the current one, so this is the one place a per-application
+    // memory may be written.
+    _restorePending=NO;
+    if(CassotisRememberInputModeEnabled())
+        CassotisStoreRememberedInputMode([self applicationIdentifier],mode);
     [self presentModeFeedback];
+}
+// The client owns the application identity; the workspace is only a fallback
+// for hosts whose text view does not expose one (some WebKit and custom
+// views).
+- (NSString *)applicationIdentifier {
+    NSString *bundle=nil;
+    @try {
+        if([self.client respondsToSelector:@selector(bundleIdentifier)])
+            bundle=[self.client bundleIdentifier];
+    } @catch(NSException *error) { (void)error; }
+    if(!bundle.length) bundle=NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier;
+    return bundle;
+}
+// An application the user never switched in keeps whatever mode is active;
+// only a mode chosen while that application was frontmost is remembered and
+// restored here. Runs once per activation, as soon as the engine is ready.
+- (void)restoreRememberedInputModeIfPending {
+    if(!_restorePending || !_engine->connected()) return;
+    _restorePending=NO;
+    if(!CassotisRememberInputModeEnabled()) return;
+    uint8_t remembered=0;
+    if(!CassotisRememberedInputMode([self applicationIdentifier],&remembered)) return;
+    try {
+        auto state=_engine->state();
+        if(state.mode==remembered) return;
+        state.mode=remembered;
+        _engine->setState(state);
+        _inputMode=remembered;
+    } catch(...) { /* engine not reachable: keep the current mode */ }
 }
 - (BOOL)ensureReady {
     if(_engine->connected()) return YES;
@@ -290,8 +366,8 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     if(_active && self.client!=client) [self deactivate];
     activeSession=self;
     self.client=client; _active=YES; _modifiers=0; _tap={}; _settingsGesture=NO;
-    if(newActivation) { _modeKnown=NO; _modeFeedbackPending=YES; }
-    [self ensureReady]; [self presentModeFeedback];
+    if(newActivation) { _modeKnown=NO; _modeFeedbackPending=YES; _restorePending=YES; }
+    [self ensureReady]; [self restoreRememberedInputModeIfPending]; [self presentModeFeedback];
     [_timer invalidate]; __weak CassotisInputSession *weak=self;
     _timer=[NSTimer timerWithTimeInterval:0.025 repeats:YES block:^(NSTimer *t){
         (void)t; [weak tick];
@@ -364,6 +440,9 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         if(NSProcessInfo.processInfo.systemUptime-_startupStarted>2) [self commit];
         return;
     }
+    // Restore before replaying buffered keys so they are interpreted with the
+    // mode this application last used.
+    [self restoreRememberedInputModeIfPending];
     try {
         // Read context before the provisional marked range was inserted. Keep
         // that range visible until all already-consumed keys have been replayed.
@@ -427,7 +506,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
 - (void)tick {
     if(!_active) return;
     if(!_startupKeys.empty()) { [self replayStartup]; return; }
-    if(!_engine->connected()) { [self ensureReady]; [self presentModeFeedback]; return; }
+    if(!_engine->connected()) { [self ensureReady]; [self restoreRememberedInputModeIfPending]; [self presentModeFeedback]; return; }
     [self presentModeFeedback];
     if(!_result.pending) return;
     try {
@@ -507,6 +586,10 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         [self commit];
     }
     if(![self ensureReady]) return [self queueStartupKey:key];
+    // The engine can become ready here rather than in tick, so a key arriving
+    // before the next timer callback must not be read in the mode the previous
+    // application left behind.
+    [self restoreRememberedInputModeIfPending];
     try {
         auto state=_engine->state();
         // Match an explicitly configured Option chord against the unmodified
@@ -616,7 +699,10 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         switch(action) { case 0:s.mode^=1;break;case 1:s.dictionary^=1;break;
             case 2:s.flags^=1;break;case 3:s.flags^=2;break;case 4:s.flags^=4;break;default:return; }
         control.setState(s);
-        if(action==0) [activeSession showInputMode:s.mode];
+        if(action==0) {
+            if(activeSession) [activeSession showInputMode:s.mode];
+            else CassotisRememberInputModeForFrontmostApplication(s.mode);
+        }
     } catch(...) { [self recover]; }
 }
 - (NSMenu *)modeMenuWithTarget:(id)target action:(SEL)action {

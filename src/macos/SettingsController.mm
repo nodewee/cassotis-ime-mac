@@ -56,7 +56,7 @@
     NSPopUpButton *_scheme, *_dictionary, *_pageKeys, *_completionKey, *_pageSize, *_theme;
     NSSlider *_fontSize;
     NSTextField *_fontSizeLabel, *_status;
-    NSButton *_fullWidth, *_punctuation, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates;
+    NSButton *_fullWidth, *_punctuation, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates, *_rememberMode;
     NSComboBox *_fontFamily;
     NSArray<NSString *> *_fontFamilies;
     NSMutableArray<NSButton *> *_rules, *_shortcutEnabled;
@@ -198,8 +198,13 @@
     _dictionary=[self popup:@[@"简体中文",@"繁體中文"] identifier:@"dictionary"];
     _fullWidth=[self check:@"使用全角输入" identifier:@"full-width"];
     _punctuation=[self check:@"使用中文标点" identifier:@"chinese-punctuation"];
-    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_punctuation,_fullWidth]],
-        [self hint:@"按 Space 或数字键选词，Enter 提交拼音原文，Esc 取消输入。单独按下并释放 Shift 切换中英文。"]]];
+    // A frontend preference, not engine state: it gates behaviour that lives
+    // entirely in the input method process, so it stays editable when the
+    // engine is unavailable and is never sent over IPC.
+    _rememberMode=[self check:@"按应用记住中英文状态" identifier:@"remember-input-mode"];
+    _rememberMode.action=@selector(rememberModeChanged:);
+    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_punctuation,_fullWidth,_rememberMode]],
+        [self hint:@"按 Space 或数字键选词，Enter 提交拼音原文，Esc 取消输入。单独按下并释放 Shift 切换中英文；开启「按应用记住中英文状态」后，每个应用各自保留上次的选择。"]]];
 
     _theme=[self popup:CassotisCandidateThemeNames() identifier:@"candidate-theme"];
     _theme.action=@selector(appearanceChanged:);
@@ -392,6 +397,13 @@
     }
     _saving=NO;
 }
+- (void)rememberModeChanged:(NSButton *)sender {
+    if(_loading) return;
+    CassotisSetRememberInputModeEnabled(sender.state==NSControlStateValueOn);
+    _status.stringValue=sender.state==NSControlStateValueOn
+        ?@"已保存：各应用分别记住上次的中英文状态。"
+        :@"已保存：中英文状态在全部应用间保持统一。";
+}
 - (void)loggingChanged:(NSButton *)sender {
     if(_loading) return;
     CassotisRuntimeLog.shared.enabled=sender.state==NSControlStateValueOn;
@@ -440,6 +452,7 @@
 }
 - (void)reloadSettings {
     _loading=YES; _ready=NO; CassotisStartEngine(); cassotis::EngineClient engine;
+    _rememberMode.state=CassotisRememberInputModeEnabled()?NSControlStateValueOn:NSControlStateValueOff;
     try {
         if(!engine.connect(CassotisSocketPath().UTF8String)) throw std::runtime_error("正在读取设置，请稍候…");
         _state=engine.state(); _ready=YES;

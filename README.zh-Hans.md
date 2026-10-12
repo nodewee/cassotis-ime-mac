@@ -115,7 +115,7 @@ export CASSOTIS_LEXICON_ROOT="/path/to/cassotis-lexicon"
 
 应用输出到 `build/arm64/Cassotis.app`，安装到 `~/Library/Input Methods/Cassotis.app`。从系统设置 → 键盘 → 文本输入添加言泉输入法，再通过输入菜单启用。若系统列表未刷新，可退出登录后重新登录。
 
-默认 Shift 切换中英文，Space 或数字选择候选，Tab 接受补全，Ctrl+Shift+F10 打开设置。完整按键和数据位置见 [CONFIGURATION.md](CONFIGURATION.md)。
+默认 Shift 切换中英文，Space 或数字选择候选，Tab 接受补全，Ctrl+Shift+F10 打开设置。默认按应用记住中英文状态（设置 → 常规），每个应用分别保留上次的选择。完整按键和数据位置见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 `./rebuild_all.sh` 清理构建输出并完整重建；`./uninstall.sh` 卸载当前用户的输入源并保留学习记录。构建环境、模型下载和词库导入说明见 [BUILD.md](BUILD.md)。默认构建为本机临时签名，打包与签名方法也见构建文档。
 
