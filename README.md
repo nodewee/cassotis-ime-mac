@@ -18,30 +18,30 @@
 
 English | [简体中文](README.zh-Hans.md) | [繁體中文](README.zh-Hant.md)
 
-Cassotis IME - 言泉输入法 is an open-source Chinese Pinyin input method for macOS, with native candidate windows, local language models and private, offline word learning.
+Cassotis IME - 言泉输入法 is an open-source Chinese Pinyin input method for macOS, with native candidate windows, a local language model and private, offline word learning.
 
 [Website](https://www.yanquan.org/mac) · [Downloads](https://github.com/shenmin/cassotis-ime-mac/releases) · [Windows](https://github.com/shenmin/cassotis-ime) · [Linux](https://github.com/shenmin/cassotis-ime-linux)
 
 An **InputMethodKit / AppKit frontend and a separate Free Pascal engine process** integrate with macOS text input. Dictionaries and models are included; candidate ranking, sentence repair and Tab completion run locally.
 
-Version **1.0.0** (build **3**) supports Apple Silicon and macOS 14 or later. See [COMPATIBILITY.md](COMPATIBILITY.md) for the tested environments and known limitations.
+Development version **2.0.0** (build **4**) supports Apple Silicon and macOS 14 or later. It has not been released yet; the latest published version is **1.0.0**. See [COMPATIBILITY.md](COMPATIBILITY.md) for the tested environments and known limitations.
 
 ## Features
 
-- Full Pinyin, initial-letter abbreviations, and six Double Pinyin schemes: Microsoft, Xiaohe, Ziranma, Sogou, Ziguang, and Pinyin Jiajia.
-- Simplified and traditional Chinese dictionaries, fuzzy Pinyin, partial candidate selection, long-sentence ranking, and local sentence repair.
-- A two-row candidate window by default, with optional expansion to three candidate rows while paging: up to nine candidates per row, an always-present Tab completion row, and the logo and version at the bottom right. Learned words can be deleted using the small red × beside them.
-- A native candidate window and settings interface, horizontal candidate rows without wrapping, a default font size of 14 points, eight color options, and a live preview. The candidate window keeps focus in the application receiving input.
-- A brief animated bubble beside the caret shows the Cassotis logo beside “中” (Chinese) or “英” (English), avoids nearby system cursor indicators, and appears when changing modes or switching from another input method to Cassotis. It dismisses when typing starts.
-- Settings categories in a sidebar, font-name completion, and direct key recording for five configurable shortcuts. Each application remembers its own Chinese/English mode by default. Confirmed choices save automatically; macOS system shortcuts and secure password fields retain their normal behavior.
-- Joint local sentence repair with bilateral verification, repaired-prefix reuse for Tab completions, and stable candidates while typing or deleting incomplete initials.
-- Correct Ziguang `sh` / `zh` / `ch` decoding (`song` / `zong` / `cong`), conservative diagnostics for invalid Pinyin and repeated vowels, with red error ranges in the candidate footer, and simplified/traditional display of shared learned words.
-- Five-syllable decoding, stricter pronunciation checks for cached paths, and prefix ranking that respects repeated choices.
-- When no predictive hint is available, Tab can join exact words for the already typed Pinyin. Predictive hints use the theme accent color; exact joins use ordinary text color.
-- One shared character language model improves long sentences, contextual words, mixed Pinyin abbreviations and Tab continuations while preserving learned preferences and exact-word protections.
-- Tab compares completion of the current word with following phrases and next-character suggestions. Short-word suggestions are shown immediately from the dictionary, then reranked in the background. Explicit Pinyin syllable boundaries are preserved.
-- Specialist vocabulary is available for exact input without crowding predictions. Additive readings no longer duplicate text-popularity evidence; shared encoders and Pinyin caches reduce repeated work.
-- All inference runs locally on the CPU through ONNX Runtime. The installed input method needs no compiler, Python installation, or online service.
+- Full Pinyin, initial-letter abbreviations and six Double Pinyin schemes: Microsoft, Xiaohe, Ziranma, Sogou, Ziguang and Pinyin Jiajia; simplified/traditional dictionaries, fuzzy Pinyin and partial selection.
+- One local character language model, with approximately 150 million parameters, handles sentence and word selection, one-key completion, Tab continuation and Pinyin-constrained correction. Only one neural model is installed.
+- Long sentences follow the same decoding path when entered key by key or as a whole. First and second candidates improve while learned preferences and fixed preferences for complete exact words remain protected.
+- Three-to-five-syllable phrases can be generated from context and corrected against Pinyin even when absent from the dictionary, such as `jiuguize` → “旧规则”. Explicitly chosen phrases can be learned.
+- [U/I/V quick input](QUICK_INPUT.md) for symbols, numbering, math, arrows, units, punctuation, dates, times, weekdays, Chinese numbers and financial amounts. Enter with Shift+U/I/V under Double Pinyin; A/B/C/D selects number-conversion candidates.
+- A period immediately after directly typed digits becomes a decimal point. This option is on by default and can be disabled in settings.
+- A two-row candidate window, optionally expanding to three candidate rows while paging, with up to nine items per row and stable horizontal positions. The Tab area always remains visible, with a logo and version; a small red × removes learned words.
+- Horizontal candidates without wrapping, a default 14-point font, eight color options and live previews. The native candidate window keeps focus in the application receiving input.
+- A brief caret-side bubble shows the Cassotis logo and “中” or “英” when changing modes or switching to Cassotis. It avoids nearby system cursor indicators and dismisses when typing starts.
+- Sidebar settings, font-name completion and direct shortcut recording with automatic saving. Each application remembers its Chinese/English mode by default; logging is off by default.
+- System event counters guard against accidental modifier-only switching during shortcuts, without HID access, Input Monitoring or Accessibility permission. System shortcuts and secure password fields retain their normal behavior.
+- Tab compares dictionary completions, following phrases and next-character suggestions. Short-word suggestions appear immediately and are reranked in the background. Exact joins of already typed Pinyin use ordinary text color when no predictive hint is available.
+- Conservative Pinyin diagnostics preserve the original text; shared learned words follow the active Chinese script, and specialist vocabulary is available for exact input.
+- All inference runs locally on the CPU through ONNX Runtime. Dictionaries and the model are bundled; the installed input method needs no compiler, Python installation or online service.
 
 ## Install and Try
 
@@ -49,63 +49,59 @@ Download the DMG, open it, double-click **言泉输入法安装器** (Cassotis I
 
 On macOS 27, the system may open Keyboard Settings without showing a confirmation. Add **言泉输入法** under **Text Input → Edit → + → Chinese, Simplified**, then return to the installer; it verifies enablement automatically.
 
-The graphical installer shows progress, preserves settings and learned words during upgrades, and provides logs and a retry option if installation fails. Using the installed input method requires no Terminal commands, compiler, Python installation, or separate model downloads. The v1.0.0 download is `cassotis-ime-macos-1.0.0-arm64-installer-signed.dmg`, signed with the Sunisoft Limited Developer ID and notarized by Apple. Local development packages ending in `-local` use an ad hoc signature. The installer also provides an uninstall option; remove the input source in System Settings first.
+The graphical installer shows progress, preserves settings and learned words during upgrades, and provides logs and a retry option if installation fails. Using the installed input method requires no Terminal commands, compiler, Python installation, or separate model downloads. Release downloads use the filename `cassotis-ime-macos-<version>-arm64-installer-signed.dmg` and are signed with the Sunisoft Limited Developer ID and notarized by Apple. The installer also provides an uninstall option; remove the input source in System Settings first.
 
 ## Benchmarks
 
-Results below compare macOS v1.0.0 with the previous release, v0.2.0, using the same complete corpora. All version numbers in these tables are macOS product versions.
+Results compare macOS v2.0.0 with the previous release, v1.0.0, using the same complete corpora. All version numbers in these tables refer to macOS releases.
 
-See [BENCHMARK.md](BENCHMARK.md) for case construction, scoring and detailed results. The corpus comes from the developer’s novel [Elegance in Timelessness (永恒的舞动)](https://www.qidian.com/book/1037259117/).
+The corpus comes from the developer’s own novel, [Elegance in Timelessness (永恒的舞动)](https://www.qidian.com/book/1037259117/).
 
-Both releases were measured on an Apple M2 Pro with 32 GiB of memory, using native arm64 programs: v1.0.0 on macOS 27.0.1, v0.2.0 on macOS 27.0. These are the recorded measurements for each release, not a rerun of both versions on the current system.
+Both releases were measured as native arm64 programs on an Apple M2 Pro with 32 GiB of memory and macOS 27.0.1. v1.0.0 retains its recorded release measurements; the old engine was not rerun.
 
 ### Long Sentence Benchmark-16300
 
 | macOS version | Top1 | Top2 | Mean (ms) | P50 (ms) | P95 (ms) | Max (ms) |
 | --- | --- | --- | --- | --- | --- | --- |
-| `v1.0.0` | **12,941/16,300 (79.39%)** | **13,534/16,300 (83.03%)** | 85.043 | 79 | 148 | 567 |
-| `v0.2.0` | 11,989/16,300 (73.55%) | 12,968/16,300 (79.56%) | 59.615 | 54 | 115 | 452 |
+| `v2.0.0` | 13,381/16,300 (82.09%) | 14,268/16,300 (87.53%) | 86.921 | 83 | 144 | 508 |
+| `v1.0.0` | 12,941/16,300 (79.39%) | 13,534/16,300 (83.03%) | 85.043 | 79 | 148 | 567 |
 
 ### Short-word Context Benchmark-65000
 
 | macOS version | Top1 | Top2 | Contested Top1 | Contested Top2 | Mean (ms) | P50 (ms) | P95 (ms) | Max (ms) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `v1.0.0` | **63,036/65,000 (96.98%)** | **64,103/65,000 (98.62%)** | **10,488/11,728 (89.43%)** | **11,196/11,728 (95.46%)** | 6.801 | 6 | 17 | 40 |
-| `v0.2.0` | 61,974/65,000 (95.34%) | 63,568/65,000 (97.80%) | 9,677/11,728 (82.51%) | 10,776/11,728 (91.88%) | 5.971 | 4 | 16 | 63 |
+| `v2.0.0` | 63,361/65,000 (97.48%) | 64,290/65,000 (98.91%) | 10,533/11,728 (89.81%) | 11,244/11,728 (95.87%) | 7.018 | 5 | 19 | 57 |
+| `v1.0.0` | 63,036/65,000 (96.98%) | 64,103/65,000 (98.62%) | 10,488/11,728 (89.43%) | 11,196/11,728 (95.46%) | 6.801 | 6 | 17 | 40 |
 
-`Contested` is the 11,728-case subset where one Pinyin query maps to at least two target words; it measures how preceding text helps select the intended homophone.
+Contested results cover the 11,728 cases whose Pinyin maps to at least two target words.
 
 ### One-key Completion Context Benchmark-12831
 
 | macOS version | Completion Hit | Avg Keys Saved | Stability | Keystroke P95 (ms) | Final P95 (ms) |
 | --- | --- | --- | --- | --- | --- |
-| `v1.0.0` | **10,331/12,831 (80.52%)** | 2.638 | **2,117/2,180 (97.11%)** | 1.213 | 9.385 |
-| `v0.2.0` | 9,420/12,831 (73.42%) | 2.548 | 1,691/1,749 (96.68%) | 1 | 1 |
+| `v2.0.0` | 10,441/12,831 (81.37%) | 2.633 | 2,126/2,188 (97.17%) | 1.897 | 18.718 |
+| `v1.0.0` | 10,331/12,831 (80.52%) | 2.638 | 2,117/2,180 (97.11%) | 1.213 | 9.385 |
 
-Average savings are per correct completion, after charging one key to accept it. Stability counts only adjacent prefixes for which the previous completion remains compatible. v1.0.0 saved 27,250 keys in total; v0.2.0 saved 24,006.
-
-v1.0.0 adds background language-model reranking. Keystroke P95 excludes it; Final P95 includes it when the displayed completion changes. v0.2.0 had no background rerank, so its two values are the same. Its completion timing was recorded in whole milliseconds; v1.0.0 records microseconds and reports milliseconds.
+Savings are per correct completion, after charging one key to accept it. Stability counts only adjacent prefixes for which the previous completion remains compatible. Short-word completions saved 27,491 net keys in v2.0.0 and 27,250 in v1.0.0.
 
 ### Long-sentence One-key Completion Benchmark-16300
 
-Leave the final four Pinyin syllables untyped and score the single visible continuation. A hit must extend the intended typed prefix and remain a prefix of the reference sentence. Coverage counts predictive prompts, excluding exact joins of already typed Pinyin; it is not prompt accuracy.
+Each sentence leaves its final four Pinyin syllables untyped and evaluates the single visible continuation. Coverage counts predictive prompts, excluding exact joins of already typed Pinyin; it is not accuracy.
 
 | macOS version | Local Completion Hit | Predictive Prompt Coverage | Total Keys Saved | P95 (ms) |
 | --- | --- | --- | --- | --- |
-| `v1.0.0` | **3,539/16,300 (21.71%)** | 15,812/16,300 (97.01%) | **7,539** | 131 |
-| `v0.2.0` | 450/16,300 (2.76%)<br>*425/16,300 (2.61%)* | 6,778/16,300 (41.58%) | 1,024<br>*988* | 86 |
+| `v2.0.0` | 3,761/16,300 (23.07%) | 16,120/16,300 (98.90%) | 9,296 | 131 |
+| `v1.0.0` | 3,539/16,300 (21.71%) | 15,812/16,300 (97.01%) | 7,539 | 131 |
 
-From macOS v1.0.0, long-completion scoring treats 他 and 她 as equivalent at the same positions. The regular v0.2.0 values were rescored from its saved 16,300 results using this rule; italic values retain its original strict scores. The engine was not rerun, and the old coverage and latency are unchanged. Short-word completion and incremental stability still use strict text equality.
-
-Long-completion production result budgets were 80 ms in v1.0.0 and 50 ms in v0.2.0; these are not full-query latency limits. Tables measure engine query/completion time, excluding model cold start, InputMethodKit/IPC, window rendering and real inter-key delays. They are not end-to-end typing latency.
+Both releases use an 80 ms long-completion result budget and treat 他 and 她 as equivalent at matching positions. Short-word completion and incremental stability remain strict. Latency measures engine queries or completion, excluding cold start, InputMethodKit/IPC, rendering and inter-key delays. Short Tab Keystroke P95 excludes background reranking; Final P95 includes it when it changes the displayed prompt.
 
 Test programs, benchmark tools, corpora and per-case reports are not included in the public source distribution.
 
-Release validation covers 600 core regressions, 2,840 simplified/traditional dictionary cases, model execution, IPC, composition recovery and settings persistence, plus real input in native controls, WebKit, Chrome, Electron and Terminal.
+Release validation covers 777 core regressions, 3,112 simplified/traditional dictionary cases, model execution, IPC, composition recovery and settings persistence, plus real input in native controls, WebKit, Chrome, Electron and Terminal.
 
 ## Build and Install
 
-Development requires **Free Pascal 3.2.2, Xcode command-line tools, and Python 3.11+**. Lazarus/LCL is not required. Obtain the generated assets from [Cassotis Lexicon v1.31.0](https://github.com/shenmin/cassotis-lexicon/tree/v1.31.0) and point `CASSOTIS_LEXICON_ROOT` to your checkout (`/path/to/...` is a placeholder):
+Development requires **Free Pascal 3.2.2, Xcode command-line tools, and Python 3.11+**. Lazarus/LCL is not required. Obtain the generated assets from [Cassotis Lexicon v2.0.0](https://github.com/shenmin/cassotis-lexicon/tree/v2.0.0) and point `CASSOTIS_LEXICON_ROOT` to your checkout (`/path/to/...` is a placeholder):
 
 ```sh
 export CASSOTIS_LEXICON_ROOT="/path/to/cassotis-lexicon"
@@ -121,6 +117,6 @@ By default, Shift switches between Chinese and English input, Space or a number 
 
 ## Source and License
 
-The engine is derived from [Cassotis IME for Windows](https://github.com/shenmin/cassotis-ime), with Free Pascal porting foundations shared with the [Linux version](https://github.com/shenmin/cassotis-ime-linux). macOS 1.0.0 incorporates the Windows 1.31.0 engine changes and [Cassotis Lexicon 1.31.0](https://github.com/shenmin/cassotis-lexicon) dictionaries and models; shared engine updates continue to follow Windows. macOS has its own frontend, releases and benchmark history.
+The engine is derived from [Cassotis IME for Windows](https://github.com/shenmin/cassotis-ime), with Free Pascal porting foundations shared with the [Linux version](https://github.com/shenmin/cassotis-ime-linux). macOS 2.0.0 incorporates the Windows 2.0.0 engine changes and [Cassotis Lexicon 2.0.0](https://github.com/shenmin/cassotis-lexicon) dictionaries and models; shared engine updates continue to follow Windows. macOS has its own frontend, releases and benchmark history.
 
 `src/macos` contains the native frontend, `src/service` / `src/ipc` implement the process protocol, `src/engine` / `src/dictionary` contain the shared production core, and `src/host` hosts the local models. See the [architecture document](docs/ARCHITECTURE.md) for module details. Model/schema checksums and lexicon input hashes are in `data/runtime-assets.sha256` and `data/lexicon-inputs.json`; licenses and provenance are described in [NOTICE.md](NOTICE.md). Application code is licensed under GPL-3.0, and the dictionaries use the upstream CC BY-SA 4.0 license.

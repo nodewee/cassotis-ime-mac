@@ -37,8 +37,7 @@ rm -f "$app/Contents/Resources/CassotisInputSource.pdf" \
 cp "$root/resources/Cassotis.png" \
     "$root/resources/CassotisInputSourceRounded.tiff" "$app/Contents/Resources/"
 rsync -a "$root/third_party/lexicon/" "$app/Contents/Resources/licenses/lexicon/"
-rm -rf "$app/Contents/Resources/licenses/rbt3"
-rsync -a "$root/third_party/macbert/" "$app/Contents/Resources/licenses/macbert/"
+rm -rf "$app/Contents/Resources/licenses/rbt3" "$app/Contents/Resources/licenses/macbert"
 rsync -a "$root/third_party/freepascal/" "$app/Contents/Resources/licenses/freepascal/"
 cp "$root/LICENSE" "$app/Contents/Resources/licenses/Cassotis.txt"
 cp "$root/third_party/onnxruntime/LICENSE" "$app/Contents/Resources/licenses/ONNXRuntime.txt"

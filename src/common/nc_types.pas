@@ -57,7 +57,7 @@ type
     );
     TncFuzzyPinyinRules = set of TncFuzzyPinyinRule;
 
-    TncCandidateSource = (cs_rule, cs_user);
+    TncCandidateSource = (cs_rule, cs_user, cs_quick_input);
     TncCandidateDisplayKind = (cdk_default, cdk_lm_compound, cdk_sentence_prefix);
     TncInputMode = (im_chinese, im_english);
     TncDictionaryVariant = (dv_simplified, dv_traditional);
@@ -110,6 +110,7 @@ type
         fuzzy_pinyin_rules: TncFuzzyPinyinRules;
         full_width_mode: Boolean;
         punctuation_full_width: Boolean;
+        decimal_period_after_digit: Boolean;
         candidate_page_size: Integer;
         candidate_expand_on_paging: Boolean;
         candidate_page_key_scheme: TncCandidatePageKeyScheme;
@@ -129,6 +130,7 @@ type
         enable_ctrl_period_punct_toggle: Boolean;
         full_width_mode: Boolean;
         punctuation_full_width: Boolean;
+        decimal_period_after_digit: Boolean;
         enable_segment_candidates: Boolean;
         segment_head_only_multi_syllable: Boolean;
         candidate_font_name: string;
@@ -322,6 +324,7 @@ type
         is_release: Boolean;
         is_repeat: Boolean;
         timestamp_ms: QWord;
+        punctuation_preceding_char: Word; // Directly typed digit, valid for this key only.
     end;
 
     TncPreeditWarningSpan = record
@@ -343,6 +346,7 @@ type
         page_count: Integer;
         candidate_pages: TncCandidatePages;
         candidate_revision: QWord;
+        selection_keys: string;
         completion_text: string;
         completion_source: TncOneKeyCompletionSource;
         error_code: Cardinal;
@@ -448,6 +452,7 @@ begin
     value.page_count := 0;
     value.candidate_pages := nil;
     value.candidate_revision := 0;
+    value.selection_keys := '123456789';
     value.completion_text := '';
     value.completion_source := okcs_none;
     value.error_code := 0;
@@ -464,6 +469,7 @@ begin
     value.fuzzy_pinyin_rules := [];
     value.full_width_mode := False;
     value.punctuation_full_width := True;
+    value.decimal_period_after_digit := True;
     value.candidate_page_size := c_default_candidate_page_size;
     value.candidate_page_key_scheme := cpks_minus_plus;
     value.one_key_completion_key := ock_tab;
@@ -541,6 +547,7 @@ begin
         right_value.fuzzy_pinyin_enabled) and
         (left_value.fuzzy_pinyin_rules = right_value.fuzzy_pinyin_rules) and
         (left_value.full_width_mode = right_value.full_width_mode) and
+        (left_value.decimal_period_after_digit = right_value.decimal_period_after_digit) and
         (left_value.punctuation_full_width =
         right_value.punctuation_full_width) and
         (left_value.candidate_page_size =

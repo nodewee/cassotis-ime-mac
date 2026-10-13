@@ -15,7 +15,7 @@ const
     c_ipc_engine_state_fuzzy_schema_version = 2;
     c_ipc_engine_state_shortcuts_schema_version = 3;
     c_ipc_engine_state_page_size_schema_version = 4;
-    c_ipc_engine_state_schema_version = 6;
+    c_ipc_engine_state_schema_version = 7;
     c_ipc_payload_max_text_bytes = 1024 * 1024;
     c_ipc_payload_max_candidates = 256;
 
@@ -81,10 +81,11 @@ const
     c_state_flag_fuzzy_pinyin_enabled = $04;
     c_state_flag_debug_mode = $08;
     c_state_flag_expand_candidates = $10;
+    c_state_flag_decimal_period = $20;
     c_state_known_flags = c_state_flag_full_width or
         c_state_flag_punctuation_full_width or
         c_state_flag_fuzzy_pinyin_enabled or c_state_flag_debug_mode or
-        c_state_flag_expand_candidates;
+        c_state_flag_expand_candidates or c_state_flag_decimal_period;
     c_engine_result_flag_async_pending = $01;
     c_engine_result_known_flags = c_engine_result_flag_async_pending;
     c_shortcut_flag_shift = $01;
@@ -700,7 +701,7 @@ var
 begin
     writer := TncIpcPayloadWriter.Create;
     try
-        WritePayloadHeader(writer);
+        WritePayloadHeaderVersion(writer, 2);
         writer.WriteUInt16(Ord(key_event.special_key));
         writer.WriteUInt16(0);
         writer.WriteUInt32(KeyModifiersToMask(key_event.modifiers));
@@ -713,6 +714,8 @@ begin
         writer.WriteUInt32(flags);
         writer.WriteUInt64(key_event.timestamp_ms);
         writer.WriteString(key_event.text);
+        writer.WriteUInt16(key_event.punctuation_preceding_char);
+        writer.WriteUInt16(0);
         Result := writer.Finish;
     finally
         writer.Free;
@@ -724,11 +727,12 @@ function nc_try_decode_key_event_payload(const payload: TBytes;
 var
     reader: TncIpcPayloadReader;
     special_key: Word;
-    reserved: Word;
+    reserved, version: Word;
     modifier_mask: Cardinal;
     flags: Cardinal;
     modifier: TncKeyModifier;
 begin
+    key_event := Default(TncKeyEvent);
     key_event.text := '';
     key_event.special_key := sk_none;
     key_event.modifiers := [];
@@ -738,7 +742,8 @@ begin
     key_event.timestamp_ms := 0;
     reader := TncIpcPayloadReader.Create(payload);
     try
-        Result := ReadPayloadHeader(reader) and
+        Result := ReadPayloadHeaderVersion(reader, version) and
+            (version <= 2) and
             reader.ReadUInt16(special_key) and reader.ReadUInt16(reserved) and
             reader.ReadUInt32(modifier_mask) and
             reader.ReadUInt32(key_event.scan_code) and
@@ -774,6 +779,15 @@ begin
                     Include(key_event.modifiers, modifier);
             key_event.is_release := (flags and c_key_flag_release) <> 0;
             key_event.is_repeat := (flags and c_key_flag_repeat) <> 0;
+        end;
+        if Result and (version = 2) then
+        begin
+            Result := reader.ReadUInt16(key_event.punctuation_preceding_char) and
+                reader.ReadUInt16(reserved) and (reserved = 0) and
+                ((key_event.punctuation_preceding_char = 0) or
+                ((key_event.punctuation_preceding_char >= Ord('0')) and
+                (key_event.punctuation_preceding_char <= Ord('9'))));
+            if not Result then reader.SetError('Invalid preceding digit');
         end;
         Result := Result and reader.Finish(error_text);
         if not Result then
@@ -868,7 +882,10 @@ begin
         if (Ord(engine_result.completion_source) > Ord(High(TncOneKeyCompletionSource))) or
             ((schema_version = 3) and (engine_result.completion_text = '')) then
             raise EncIpcPayloadError.Create('Invalid completion source');
-        if engine_result.candidate_revision <> 0 then schema_version := 4;
+        if engine_result.candidate_revision <> 0 then schema_version := 5;
+        if (engine_result.selection_keys <> '') and (engine_result.selection_keys <> 'abcd') and
+            (engine_result.selection_keys <> '123456789') then
+            raise EncIpcPayloadError.Create('Invalid candidate selection keys');
         WritePayloadHeaderVersion(writer, schema_version);
         writer.WriteBoolean(engine_result.handled);
         writer.WriteUInt16(0);
@@ -930,6 +947,7 @@ begin
                 for candidate in page.candidates do WriteCandidate(writer, candidate);
             end;
         end;
+        if schema_version >= 5 then writer.WriteString(engine_result.selection_keys);
         Result := writer.Finish;
     finally
         writer.Free;
@@ -958,7 +976,7 @@ begin
     reader := TncIpcPayloadReader.Create(payload);
     try
         Result := ReadPayloadHeaderVersion(reader, version) and
-            ((version >= 1) and (version <= 4)) and
+            ((version >= 1) and (version <= 5)) and
             reader.ReadBoolean(engine_result.handled) and
             reader.ReadUInt16(reserved16) and reader.ReadByte(result_flags) and
             reader.ReadInt32(engine_result.selected_index) and
@@ -971,7 +989,7 @@ begin
             reader.ReadString(engine_result.completion_text) and
             reader.ReadString(engine_result.error_text) and
             reader.ReadUInt32(candidate_count);
-        if (version < 1) or (version > 4) then
+        if (version < 1) or (version > 5) then
             reader.SetError('Unsupported engine result version');
         if Result and ((reserved16 <> 0) or
             ((result_flags and not c_engine_result_known_flags) <> 0)) then
@@ -1089,6 +1107,13 @@ begin
                 (engine_result.selected_index < Integer(candidate_count));
             if not Result then reader.SetError('Invalid candidate viewport');
         end;
+        if Result and (version >= 5) then
+        begin
+            Result := reader.ReadString(engine_result.selection_keys) and
+                ((engine_result.selection_keys = '') or (engine_result.selection_keys = 'abcd') or
+                (engine_result.selection_keys = '123456789'));
+            if not Result then reader.SetError('Invalid candidate selection keys');
+        end;
         Result := Result and reader.Finish(error_text);
         if not Result then
         begin
@@ -1123,6 +1148,7 @@ begin
             flags := flags or c_state_flag_debug_mode;
         if state.candidate_expand_on_paging then
             flags := flags or c_state_flag_expand_candidates;
+        if state.decimal_period_after_digit then flags := flags or c_state_flag_decimal_period;
         writer.WriteByte(flags);
         writer.WriteUInt32(nc_fuzzy_pinyin_rules_to_mask(
             state.fuzzy_pinyin_rules));
@@ -1239,6 +1265,11 @@ begin
             reader.SetError('State payload contains invalid flags');
             Result := False;
         end;
+        if Result and (version < 7) and ((flags and c_state_flag_decimal_period) <> 0) then
+        begin
+            reader.SetError('Decimal period requires state schema 7');
+            Result := False;
+        end;
         if Result and (version < 6) and
             ((flags and c_state_flag_expand_candidates) <> 0) then
         begin
@@ -1295,6 +1326,8 @@ begin
             state.full_width_mode := (flags and c_state_flag_full_width) <> 0;
             state.punctuation_full_width :=
                 (flags and c_state_flag_punctuation_full_width) <> 0;
+            state.decimal_period_after_digit := (version < 7) or
+                ((flags and c_state_flag_decimal_period) <> 0);
             state.fuzzy_pinyin_enabled :=
                 (flags and c_state_flag_fuzzy_pinyin_enabled) <> 0;
             state.fuzzy_pinyin_rules :=

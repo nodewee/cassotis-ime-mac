@@ -56,7 +56,7 @@
     NSPopUpButton *_scheme, *_dictionary, *_pageKeys, *_completionKey, *_pageSize, *_theme;
     NSSlider *_fontSize;
     NSTextField *_fontSizeLabel, *_status;
-    NSButton *_fullWidth, *_punctuation, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates, *_rememberMode;
+    NSButton *_fullWidth, *_punctuation, *_decimalPeriod, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates, *_rememberMode;
     NSComboBox *_fontFamily;
     NSArray<NSString *> *_fontFamilies;
     NSMutableArray<NSButton *> *_rules, *_shortcutEnabled;
@@ -198,12 +198,13 @@
     _dictionary=[self popup:@[@"简体中文",@"繁體中文"] identifier:@"dictionary"];
     _fullWidth=[self check:@"使用全角输入" identifier:@"full-width"];
     _punctuation=[self check:@"使用中文标点" identifier:@"chinese-punctuation"];
+    _decimalPeriod=[self check:@"连续输入数字后，句号使用小数点" identifier:@"decimal-period-after-digit"];
     // A frontend preference, not engine state: it gates behaviour that lives
     // entirely in the input method process, so it stays editable when the
     // engine is unavailable and is never sent over IPC.
     _rememberMode=[self check:@"按应用记住中英文状态" identifier:@"remember-input-mode"];
     _rememberMode.action=@selector(rememberModeChanged:);
-    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_punctuation,_fullWidth,_rememberMode]],
+    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_punctuation,_decimalPeriod,_fullWidth,_rememberMode]],
         [self hint:@"按 Space 或数字键选词，Enter 提交拼音原文，Esc 取消输入。单独按下并释放 Shift 切换中英文；开启「按应用记住中英文状态」后，每个应用各自保留上次的选择。"]]];
 
     _theme=[self popup:CassotisCandidateThemeNames() identifier:@"candidate-theme"];
@@ -390,6 +391,7 @@
 - (void)changed:(id)sender {
     (void)sender; if(_loading || !_ready || _saving) return;
     for(NSButton *rule in _rules) rule.enabled=_fuzzy.state==NSControlStateValueOn;
+    _decimalPeriod.enabled=_punctuation.state==NSControlStateValueOn;
     _saving=YES;
     if(![self persistSettings]) {
         NSString *error=_status.stringValue;
@@ -460,7 +462,7 @@
         [_pageKeys selectItemAtIndex:_state.pageKeys]; [_completionKey selectItemAtIndex:_state.completionKey];
         [_pageSize selectItemAtIndex:_state.pageSize-3]; _fullWidth.state=(_state.flags&1)?1:0;
         _expandCandidates.state=(_state.flags&16)?1:0;
-        _punctuation.state=(_state.flags&2)?1:0; _fuzzy.state=(_state.flags&4)?1:0;
+        _punctuation.state=(_state.flags&2)?1:0; _decimalPeriod.state=(_state.flags&32)?1:0; _fuzzy.state=(_state.flags&4)?1:0;
         for(NSUInteger i=0;i<_rules.count;++i) { _rules[i].state=(_state.fuzzy&(1<<i))?1:0; _rules[i].enabled=_fuzzy.state!=0; }
         for(int i=0;i<5;++i) {
             _shortcutEnabled[i].state=_state.shortcuts[i].disabled?0:1;
@@ -481,6 +483,7 @@
     // Do not present placeholder engine state as editable user preferences.
     for(NSControl *control in @[_scheme,_dictionary,_pageKeys,_completionKey,_pageSize,_theme,_fontSize,
         _fontFamily,_fullWidth,_punctuation,_fuzzy,_resetAppearance,_expandCandidates]) control.enabled=_ready;
+    _decimalPeriod.enabled=_ready && _punctuation.state!=0;
     for(NSButton *control in _shortcutEnabled) control.enabled=_ready;
     for(NSButton *control in _rules) control.enabled=_ready && _fuzzy.state!=0;
     for(NSUInteger i=0;i<_shortcuts.count;++i) _shortcuts[i].enabled=_ready && _shortcutEnabled[i].state!=0;
@@ -512,7 +515,7 @@
     state.scheme=(uint8_t)_scheme.indexOfSelectedItem; state.dictionary=(uint8_t)_dictionary.indexOfSelectedItem;
     state.pageKeys=(uint8_t)_pageKeys.indexOfSelectedItem; state.completionKey=(uint8_t)_completionKey.indexOfSelectedItem;
     state.pageSize=(uint8_t)(_pageSize.indexOfSelectedItem+3);
-    state.flags=(_fullWidth.state?1:0)|(_punctuation.state?2:0)|(_fuzzy.state?4:0)|(_expandCandidates.state?16:0)|(_state.flags&8); state.fuzzy=0;
+    state.flags=(_fullWidth.state?1:0)|(_punctuation.state?2:0)|(_fuzzy.state?4:0)|(_expandCandidates.state?16:0)|(_decimalPeriod.state?32:0)|(_state.flags&8); state.fuzzy=0;
     for(NSUInteger i=0;i<_rules.count;++i) if(_rules[i].state) state.fuzzy|=1<<i;
     for(int i=0;i<5;++i) {
         if(_shortcuts[i].recording) { _status.stringValue=@"请先完成快捷键录制，或按 Esc 取消。"; return NO; }

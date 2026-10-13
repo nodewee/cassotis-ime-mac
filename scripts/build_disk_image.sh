@@ -40,5 +40,7 @@ osascript "$root/scripts/layout_dmg.applescript" "$work/mount"
 sync
 hdiutil detach -quiet "$work/mount"
 mounted=false
-hdiutil convert -quiet -format UDZO -o "$output" "$work/writable.dmg"
+# LZMA is supported since macOS 10.15, below our macOS 14 minimum. It keeps
+# the signed installer intact while avoiding zlib's larger download size.
+hdiutil convert -quiet -format ULMO -o "$output" "$work/writable.dmg"
 printf 'Disk image layout: %s\n' "$output"

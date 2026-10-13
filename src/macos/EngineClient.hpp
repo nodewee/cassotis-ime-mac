@@ -42,6 +42,7 @@ struct Result {
     bool handled = false, pending = false;
     int32_t selected = -1, page = 0, pages = 0;
     std::string commit, preedit, query, completion;
+    std::string selectionKeys = "123456789";
     CompletionSource completionSource = CompletionSource::None;
     std::vector<Candidate> candidates;
     std::vector<CandidatePage> candidatePages;
@@ -49,7 +50,7 @@ struct Result {
     std::vector<PreeditWarning> warnings;
 };
 struct Key {
-    uint16_t special = 0;
+    uint16_t special = 0, precedingDigit = 0;
     uint32_t modifiers = 0, scan = 0;
     bool release = false, repeat = false;
     uint64_t timestamp = 0;
@@ -57,7 +58,7 @@ struct Key {
 };
 struct Shortcut { uint16_t key = 0; uint8_t modifiers = 0; bool disabled = false; };
 struct State {
-    uint8_t mode = 0, dictionary = 0, scheme = 0, flags = 2;
+    uint8_t mode = 0, dictionary = 0, scheme = 0, flags = 34;
     uint32_t fuzzy = 0;
     uint8_t pageKeys = 0, completionKey = 0, pageSize = 5;
     Shortcut shortcuts[5];

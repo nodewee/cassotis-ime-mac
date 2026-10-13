@@ -87,6 +87,7 @@ begin
     Result.enable_shift_space_full_width_toggle := True;
     Result.enable_ctrl_period_punct_toggle := True;
     Result.punctuation_full_width := True;
+    Result.decimal_period_after_digit := True;
     Result.enable_segment_candidates := True;
     Result.segment_head_only_multi_syllable := True;
     Result.candidate_font_name := c_default_candidate_font_name;

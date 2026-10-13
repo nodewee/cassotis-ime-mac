@@ -97,6 +97,15 @@ CREATE INDEX IF NOT EXISTS idx_dict_base_completion_pair_audit_query
         challenger_full_pinyin, challenger_text,
         context_width DESC, context_suffix);
 
+CREATE TABLE IF NOT EXISTS dict_base_short_promotion (
+    pinyin TEXT NOT NULL,
+    baseline_text TEXT NOT NULL,
+    promoted_text TEXT NOT NULL,
+    lead INTEGER NOT NULL DEFAULT 0,
+    candidates TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(pinyin, baseline_text)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS dict_base_pinyin_alias (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     compact_pinyin TEXT NOT NULL,

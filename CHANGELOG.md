@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 (build 4, unreleased)
 
+- Align with Windows and Cassotis Lexicon v2.0.0.
+- Replace all eleven neural graphs with one shared character language model for sentence and word selection, completion, phrase generation and Pinyin-constrained correction; remove the retired graphs, indexes, hosts and compact parameters.
+- Improve the first two long-sentence candidates, and make completed long input follow the same candidate path whether entered at once or key by key.
+- Generate and correct three-to-five-syllable phrases outside the dictionary; preserve fixed exact and learned preferences, and remember explicitly selected phrases.
+- Add U/I/V symbols, dates, times, Chinese numbers and financial amounts, including Shift-entry for double Pinyin and a/b/c/d selection for numeric candidates. See [Quick Input](QUICK_INPUT.md).
+- Add the default-on, immediately saved decimal-period-after-digit preference. Direct typing is distinguished from pasted text, candidate selection and cursor movement without HID access.
+- Compress the installer DMG with LZMA to reduce the download size while keeping the complete dictionaries and shared model.
 - Ignore non-key events delivered to the input method's `handleEvent:`, where reading `keyCode` from a mouse drag raised an exception and broke the input connection.
 - Cancel a modifier-only shortcut, such as the bare Shift Chinese/English switch, when a key or mouse button was pressed while the modifier was held, including input the frontmost application consumed before the input method saw it (for example Shift+Return in some terminals). The frontend compares system-wide event counts and times around the press and release; it reads no key contents and needs no privacy permission, and keeps the previous behavior when the counters are unavailable. When events are handled late and the counters cannot show whether input fell inside the hold, the shortcut is cancelled.
-- Remember the Chinese/English mode per application. With the default-on "remember per application" preference in Settings → General, each application keeps the mode the user last chose there and restores it when that application becomes active again; an application that was never switched in inherits the current mode, and turning the preference off returns to one global mode. The memory lives in the input method's UserDefaults and survives a restart. Behaviour only, no engine or protocol change.
+- Remember the Chinese/English mode per application. With the default-on "remember per application" preference in Settings → General, each application keeps the mode the user last chose there and restores it when that application becomes active again; an application that was never switched in inherits the current mode, and turning the preference off returns to one global mode. The memory lives in the input method's UserDefaults and survives a restart.
 
 ## 1.0.0 (build 3)
 

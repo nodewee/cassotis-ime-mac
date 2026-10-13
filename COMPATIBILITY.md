@@ -1,6 +1,6 @@
 # Compatibility
 
-Version 1.0.0 (build 3) targets Apple Silicon and macOS 14 or later. Build and desktop validation used macOS 27.0.1, an Apple M2 Pro, Xcode 27.0 and Free Pascal 3.2.2.
+Development version 2.0.0 (build 4), not yet released, targets Apple Silicon and macOS 14 or later. Build and desktop validation used macOS 27.0.1, an Apple M2 Pro, Xcode 27.0 and Free Pascal 3.2.2.
 
 | Environment | Validation status |
 | --- | --- |
@@ -14,7 +14,7 @@ Version 1.0.0 (build 3) targets Apple Silicon and macOS 14 or later. Build and d
 
 The frontend uses public InputMethodKit and AppKit APIs. Normal operation does not require Accessibility, Input Monitoring or event-posting permission. To notice a key or click that the frontmost application consumed while a modifier was held, modifier-only shortcuts compare system-wide event counts and times from public Quartz event-source counters; these reveal no key contents.
 
-Qualification includes normal and immediate-input cold launches through AppKit, WebKit and secure text fields, plus twelve browser/Terminal handoffs. Installed UI checks cover three-row paging, active-row digits, cross-row clicks, Tab completion, punctuation, mode feedback and settings autosave. Installation checks cover upgrade and download quarantine on the existing test host; this is not a clean-machine qualification.
+Qualification includes controlled delayed-start and model-loading trials, native AppKit, WebKit and secure text fields, plus twelve browser/Terminal handoffs. Installed UI checks cover three-row paging, active-row digits, cross-row clicks, Tab completion, U/I/V quick input, direct-digit decimal periods, punctuation, per-application mode feedback and settings autosave. Installation checks cover upgrade and download quarantine on the existing test host; this is not a clean-machine qualification.
 
 On the macOS 27.0.1 test host, the automatic enablement request opens Keyboard Settings without showing a consent dialog. For first installation, use System Settings → Keyboard → Text Input → Edit → + → Chinese, Simplified → 言泉输入法 → Add, then return to the installer. The installer verifies the actual enabled state before reporting completion. Upgrades retain an already enabled input source. Automatic consent worked in the v0.1.0 macOS 26 qualification; it has not been qualified on macOS 27.
 

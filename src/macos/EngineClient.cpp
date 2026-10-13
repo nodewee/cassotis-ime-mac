@@ -48,12 +48,12 @@ std::string Reader::string() {
 uint16_t Reader::schema() { auto v=u16(); require(u16()==0,"Invalid schema flags"); return v; }
 void Reader::end() { require(offset==data.size(),"Trailing IPC payload"); }
 Bytes encodeKey(const Key &k) {
-    Writer w; w.schema(); w.u16(k.special); w.u16(0); w.u32(k.modifiers); w.u32(k.scan);
-    w.u32((k.release?1:0)|(k.repeat?2:0)); w.u64(k.timestamp); w.string(k.text); return w.data;
+    Writer w; w.schema(2); w.u16(k.special); w.u16(0); w.u32(k.modifiers); w.u32(k.scan);
+    w.u32((k.release?1:0)|(k.repeat?2:0)); w.u64(k.timestamp); w.string(k.text); w.u16(k.precedingDigit); w.u16(0); return w.data;
 }
 static Candidate readCandidate(Reader &r) {
     Candidate c; c.source=r.u8(); c.kind=r.u8(); auto weight=r.u8(), deletable=r.u8();
-    require(c.source<=1 && c.kind<=2 && weight<=1 && deletable<=1,"Invalid candidate flags"); c.deletable=deletable;
+    require(c.source<=2 && c.kind<=2 && weight<=1 && deletable<=1,"Invalid candidate flags"); c.deletable=deletable;
     for(int j=0;j<3;++j) r.u32(); require(!(r.u32()&~2047u),"Invalid fuzzy rules");
     c.text=r.string(); c.comment=r.string(); return c;
 }
@@ -61,7 +61,7 @@ static bool sameCandidate(const Candidate &a,const Candidate &b) {
     return a.text==b.text && a.comment==b.comment && a.source==b.source && a.kind==b.kind && a.deletable==b.deletable;
 }
 Result decodeResult(const Bytes &data) {
-    Reader r(data); auto version=r.schema(); require(version>=1 && version<=4,"Unsupported result schema"); Result v;
+    Reader r(data); auto version=r.schema(); require(version>=1 && version<=5,"Unsupported result schema"); Result v;
     auto handled=r.u8(); require(handled<=1 && r.u16()==0,"Invalid result flags"); v.handled=handled;
     auto flags=r.u8(); require((flags&~1)==0,"Invalid result flags"); v.pending=flags&1;
     v.selected=int32_t(r.u32()); v.page=int32_t(r.u32()); v.pages=int32_t(r.u32()); auto error=r.u32();
@@ -111,20 +111,25 @@ Result decodeResult(const Bytes &data) {
         }
         require(activeFound,"Missing active candidate row");
     }
+    if(version>=5) {
+        v.selectionKeys=r.string();
+        require(v.selectionKeys.empty() || v.selectionKeys=="abcd" || v.selectionKeys=="123456789",
+            "Invalid candidate selection keys");
+    }
     r.end(); require(v.selected>=-1 && v.selected<int32_t(count),"Invalid candidate selection");
     require(v.page>=0 && v.pages>=0 && (v.pages==0 || v.page<v.pages),"Invalid candidate page");
     if(error) throw std::runtime_error("Engine error: "+message);
     return v;
 }
 Bytes encodeState(const State &s) {
-    Writer w; w.schema(6); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
+    Writer w; w.schema(7); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
     w.u32(s.fuzzy); w.u8(s.pageKeys); w.u8(s.completionKey); w.u8(s.pageSize); w.u8(0);
     for(auto &k:s.shortcuts) { w.u16(k.key); w.u8(k.modifiers); w.u8(0); }
     uint8_t disabled=0; for(int i=0;i<5;++i) if(s.shortcuts[i].disabled) disabled|=1<<i;
     w.u8(disabled); w.u8(0); w.u16(0); return w.data;
 }
 State decodeState(const Bytes &data) {
-    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=6,"Unsupported state schema"); State s;
+    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=7,"Unsupported state schema"); State s;
     s.mode=r.u8(); s.dictionary=r.u8(); s.scheme=r.u8(); s.flags=r.u8(); s.fuzzy=r.u32();
     s.pageKeys=r.u8(); s.completionKey=r.u8(); s.pageSize=r.u8(); require(r.u8()==0,"Invalid state flags");
     for(auto &k:s.shortcuts) { k.key=r.u16(); k.modifiers=r.u8(); require(r.u8()==0 && !(k.modifiers&~7),"Invalid shortcut"); }
@@ -132,8 +137,9 @@ State decodeState(const Bytes &data) {
         auto mask=r.u8(); require(!(mask&~31) && r.u8()==0 && r.u16()==0,"Invalid shortcut mask");
         for(int i=0;i<5;++i) s.shortcuts[i].disabled=mask&(1<<i);
     }
-    r.end(); require(s.mode<=1 && s.dictionary<=1 && s.scheme<=6 && !(s.flags&~(schema>=6?31:15)) &&
+    r.end(); require(s.mode<=1 && s.dictionary<=1 && s.scheme<=6 && !(s.flags&~(schema>=7?63:schema>=6?31:15)) &&
         s.pageKeys<=3 && s.completionKey<=1 && s.pageSize>=3 && s.pageSize<=9,"Invalid state values");
+    if(schema<7) s.flags|=32; // Older installations inherit the enabled default.
     return s;
 }
 void EngineClient::disconnect() { if(fd_>=0) ::close(fd_); fd_=-1; ++generation_; }

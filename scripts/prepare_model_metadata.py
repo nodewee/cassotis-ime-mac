@@ -10,33 +10,13 @@ def runtime_metadata(name, value):
     def select(obj, keys):
         return {key: obj[key] for key in keys.split()}
     if name == 'char_lm':
-        return select(value, 'format architecture quantization float_mlp_out_layers n_layer n_head n_embd '
-                      'block_size vocab_size bos_id unk_id source_checkpoint_sha256 files')
-    if name == 'local_repair':
-        result = select(value, 'format enabled joint_bilateral joint_score_agreement style_phrase_recovery model minimum_word_ratio no_context_refinement_passes '
-                        'source_model source_revision license teacher_url checkpoint_sha256 '
-                        'max_characters context_characters dictionary_constraints_sha256 files')
-        for key in ('no_context', 'document_context'):
-            result[key] = select(value[key], 'edit margin max_edits max_spans')
-        return result
-    result = select(value, 'format parameters model model_sha256 float_model_bytes int8_model_bytes vocab_sha256')
-    result['fallback_generator'] = select(value['fallback_generator'],
-        'model model_sha256 model_bytes parameters output_words minimum_confidence')
-    result['config'] = select(value['config'], 'input_vocab_size word_vocab_size max_input_length candidate_count '
-        'path_words path_feature_count type_vocab_size d_model heads layers feedforward dropout '
-        'feature_schema candidate_layers candidate_feedforward')
-    result['quantization'] = select(value['quantization'], 'weight_type operators fp32_protected')
-    result['gate'] = {'dev': {'threshold': value['gate']['dev']['threshold']}}
-    result['runtime_index'] = select(value['runtime_index'],
-        'file sha256 bytes vocab_sha256 format anchors candidates candidate_limit')
-    result['recall_selector'] = select(value['recall_selector'], 'type features trees model_sha256')
-    return result
+        return select(value, 'format architecture task quantization input_embedding custom_operators n_layer n_head n_embd '
+                      'block_size vocab_size bos_id unk_id correction_context_chars source_checkpoint_sha256 files')
+    raise ValueError(f'Unsupported model: {name}')
 
 
 
-MODEL_MANIFESTS = (('local_repair', 'runtime_manifest.json'),
-                   ('char_lm', 'runtime_manifest.json'),
-                   ('local_completion', 'model_manifest.json'))
+MODEL_MANIFESTS = (('char_lm', 'runtime_manifest.json'),)
 
 
 def prepare(directory, check=False):

@@ -29,6 +29,16 @@ const
     VK_ADD = $6B;
     VK_SUBTRACT = $6D;
     VK_DECIMAL = $6E;
+    VK_NUMPAD0 = $60;
+    VK_NUMPAD1 = $61;
+    VK_NUMPAD2 = $62;
+    VK_NUMPAD3 = $63;
+    VK_NUMPAD4 = $64;
+    VK_NUMPAD5 = $65;
+    VK_NUMPAD6 = $66;
+    VK_NUMPAD7 = $67;
+    VK_NUMPAD8 = $68;
+    VK_NUMPAD9 = $69;
     VK_DIVIDE = $6F;
     VK_F1 = $70;
     VK_F10 = $79;

@@ -21,9 +21,11 @@ type
         FSurroundingText: string;
         FCursorOffset: Integer;
         FComposition: string;
+        FQuickInputExplicitEntry: Boolean;
         FCandidates: TncCandidateList;
         FSelectedIndex: Integer;
         FViewport: TncCandidateViewport;
+        FCurrentPage: Integer;
         FCandidatePages: TncCandidatePages;
         FCandidateRevision: QWord;
         FCompletionText: string;
@@ -64,6 +66,7 @@ type
         property SurroundingText: string read FSurroundingText;
         property CursorOffset: Integer read FCursorOffset;
         property Composition: string read FComposition;
+        property QuickInputExplicitEntry: Boolean read FQuickInputExplicitEntry write FQuickInputExplicitEntry;
         property Candidates: TncCandidateList read FCandidates;
         property SelectedIndex: Integer read FSelectedIndex;
         property Viewport: TncCandidateViewport read FViewport;
@@ -135,9 +138,11 @@ begin
     LongCompletionPending := False;
     OneKeyRerankPending := False;
     FComposition := '';
+    FQuickInputExplicitEntry := False;
     SetLength(FCandidates, 0);
     FSelectedIndex := -1;
     FViewport := Default(TncCandidateViewport);
+    FCurrentPage := 0;
     FCandidatePages := nil;
     Inc(FCandidateRevision);
     FCompletionText := '';
@@ -147,31 +152,67 @@ end;
 
 procedure TncEngineContext.UpdateViewport(const enabled, input_changed: Boolean;
     const current_page, total_pages: Integer; const expand_requested: Boolean);
+var previous: TncCandidateViewport;
 begin
+    previous := FViewport;
     FViewport.update(enabled, input_changed, current_page, total_pages, expand_requested);
+    // Moving the active row invalidates its old action even if the same three
+    // pages remain visible. A Tab-only refresh keeps all these fields intact.
+    if (FCurrentPage <> current_page) or (previous.expanded <> FViewport.expanded) or
+        (previous.first_page <> FViewport.first_page) or
+        (previous.row_count <> FViewport.row_count) then Inc(FCandidateRevision);
+    FCurrentPage := current_page;
 end;
 
 procedure TncEngineContext.PublishCandidatePages(const pages: TncCandidatePages);
+var row, item: Integer; unchanged: Boolean; a, b: TncCandidate;
 begin
+    unchanged := Length(pages) = Length(FCandidatePages);
+    row := 0;
+    while unchanged and (row < Length(pages)) do
+    begin
+        unchanged := (pages[row].page_index = FCandidatePages[row].page_index) and
+            (Length(pages[row].candidates) = Length(FCandidatePages[row].candidates));
+        item := 0;
+        while unchanged and (item < Length(pages[row].candidates)) do
+        begin
+            a := pages[row].candidates[item]; b := FCandidatePages[row].candidates[item];
+            unchanged := (a.text = b.text) and (a.comment = b.comment) and
+                (a.source = b.source) and (a.display_kind = b.display_kind) and
+                (a.deletable = b.deletable);
+            Inc(item);
+        end;
+        Inc(row);
+    end;
+    // An asynchronous Tab update does not invalidate a click on unchanged words.
+    // SetComposition separately invalidates the token even if the same words return.
+    if unchanged then Exit;
     FCandidatePages := Copy(pages, 0, Length(pages));
+    for row := 0 to High(FCandidatePages) do
+        FCandidatePages[row].candidates := Copy(pages[row].candidates);
     Inc(FCandidateRevision);
 end;
 
 procedure TncEngineContext.SetComposition(const value: string);
 begin
+    if FComposition <> value then Inc(FCandidateRevision);
     FComposition := value;
+    if value = '' then FQuickInputExplicitEntry := False;
 end;
 
 procedure TncEngineContext.AppendComposition(const value: string);
 begin
-    FComposition := FComposition + value;
+    SetComposition(FComposition + value);
 end;
 
 function TncEngineContext.DeleteLastCompositionCharacter: Boolean;
 begin
     Result := Length(FComposition) > 0;
     if Result then
+    begin
         Delete(FComposition, Length(FComposition), 1);
+        Inc(FCandidateRevision);
+    end;
 end;
 
 procedure TncEngineContext.SetCandidates(const value: TncCandidateList);

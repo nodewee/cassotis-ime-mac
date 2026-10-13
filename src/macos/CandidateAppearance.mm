@@ -276,7 +276,8 @@ NSView *CassotisCandidateView(const cassotis::Result &r, CGFloat size, NSString 
         // Keep the actual numbered prefix in the layout even on inactive rows.
         // Spaces have different advances and move every subsequent candidate
         // when the active row changes, especially with proportional fonts.
-        NSString *prefix=[NSString stringWithFormat:@"%ld  ",(long)i+1];
+        NSString *prefix=(size_t)i<r.selectionKeys.size()?
+            [NSString stringWithFormat:@"%c  ",r.selectionKeys[i]]:@"";
         NSColor *color=c.source==1?(selected?colors.selectedUser:colors.user):
             c.kind==1?(selected?colors.selectedCompound:colors.compound):(selected?colors.selectedText:colors.text);
         CassotisCandidateButton *button=candidateButton(prefix,str(c.text),displayComment(c.comment),

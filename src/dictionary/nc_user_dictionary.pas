@@ -419,6 +419,7 @@ const
         '''setting.pinyin_scheme'', ''setting.dictionary_variant'', ' +
         '''setting.full_width_mode'', ' +
         '''setting.punctuation_full_width'', ' +
+        '''setting.decimal_period_after_digit'', ' +
         '''setting.fuzzy_pinyin_enabled'', ' +
         '''setting.fuzzy_pinyin_rules'', ' +
         '''setting.candidate_page_size'', ' +
@@ -490,6 +491,8 @@ begin
                 state.full_width_mode := setting_value <> 0
             else if key_name = 'setting.punctuation_full_width' then
                 state.punctuation_full_width := setting_value <> 0
+            else if key_name = 'setting.decimal_period_after_digit' then
+                state.decimal_period_after_digit := setting_value <> 0
             else if key_name = 'setting.candidate_expand_on_paging' then
                 state.candidate_expand_on_paging := setting_value <> 0
             else if (key_name = 'setting.candidate_page_size') and
@@ -592,6 +595,9 @@ begin
         ExecutePairStatement(c_upsert_setting,
         'setting.punctuation_full_width',
         UTF8Decode(IntToStr(Ord(state.punctuation_full_width)))) and
+        ExecutePairStatement(c_upsert_setting,
+        'setting.decimal_period_after_digit',
+        UTF8Decode(IntToStr(Ord(state.decimal_period_after_digit)))) and
         ExecutePairStatement(c_upsert_setting,
         'setting.candidate_page_size', UTF8Decode(IntToStr(
         state.candidate_page_size))) and

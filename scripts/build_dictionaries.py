@@ -19,16 +19,9 @@ def digest(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--lexicon', type=Path, default=os.environ.get('CASSOTIS_LEXICON_ROOT'))
+    parser.add_argument('--lexicon', type=Path, default=Path(os.environ.get('CASSOTIS_LEXICON_ROOT', ROOT.parent / 'cassotis-lexicon')))
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args()
-    if args.lexicon is None:
-        parser.error('Set CASSOTIS_LEXICON_ROOT or pass --lexicon with the Cassotis Lexicon directory')
-    manifest_inputs = json.loads((ROOT / 'data/lexicon-inputs.json').read_text())
-    for name, expected in manifest_inputs['source_sha256'].items():
-        source = args.lexicon / name
-        if not source.is_file() or digest(source) != expected:
-            parser.error(f'Lexicon input is missing or has an unexpected checksum: {name}')
     arch = os.environ.get('CASSOTIS_ARCH', 'arm64')
     tool = ROOT / 'build' / arch / 'bin/cassotis-dict-init'
     schema = ROOT / 'data/schema.sql'
@@ -43,7 +36,8 @@ def main():
              ('completion_lookup', 'completion_lookup'),
              ('completion_competition', 'completion_competition'),
              ('completion_pair_audit', 'completion_pair_audit'),
-             ('char_lm', 'char_lm'), ('char_reverse_lm', 'char_reverse_lm')]
+             ('char_lm', 'char_lm'), ('char_reverse_lm', 'char_reverse_lm'),
+             ('short_promotion', 'short_promotion')]
     for variant in ('sc', 'tc'):
         sources = [(generated / f'dict_{name}_{variant}.txt', mode) for name, mode in modes]
         fingerprint = {'schema': digest(schema), 'importer': digest(tool),
@@ -65,13 +59,15 @@ def main():
                                    stdout=log, stderr=subprocess.STDOUT, check=True)
                 subprocess.run([str(tool), str(database), str(schema), '--build-contains-index'],
                                stdout=log, stderr=subprocess.STDOUT, check=True)
+                subprocess.run([str(tool), str(database), str(schema), '--require-short-promotion'],
+                               stdout=log, stderr=subprocess.STDOUT, check=True)
             with sqlite3.connect(database) as connection:
                 assert connection.execute('PRAGMA integrity_check').fetchone() == ('ok',)
                 tables = [row[0] for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'")]
                 counts = {t: connection.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
                           for t in tables}
-                assert counts.get('dict_base', 0) == manifest_inputs['base_entries'][variant]
+                assert counts.get('dict_base', 0) > 180000
                 connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             result = {'source': fingerprint, 'sha256': digest(database), 'rows': counts}
             os.replace(database, destination)

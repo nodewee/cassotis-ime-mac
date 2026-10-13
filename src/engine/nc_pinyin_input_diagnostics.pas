@@ -21,16 +21,19 @@ type
     TncPinyinInputDiagnostics = class
     private
         m_cached: Boolean;
+        m_quick_input_active: Boolean;
         m_text: string;
         m_scheme: TncPinyinInputScheme;
         m_spans: TncPinyinDiagnosticSpans;
     public
         function check(const raw_text: string;
-            const scheme: TncPinyinInputScheme): TncPinyinDiagnosticSpans;
+            const scheme: TncPinyinInputScheme;
+            const quick_input_active: Boolean = False): TncPinyinDiagnosticSpans;
     end;
 
 function nc_check_pinyin_input(const raw_text: string;
-    const scheme: TncPinyinInputScheme): TncPinyinDiagnosticSpans;
+    const scheme: TncPinyinInputScheme;
+    const quick_input_active: Boolean = False): TncPinyinDiagnosticSpans;
 
 implementation
 
@@ -284,7 +287,8 @@ begin
 end;
 
 function nc_check_pinyin_input(const raw_text: string;
-    const scheme: TncPinyinInputScheme): TncPinyinDiagnosticSpans;
+    const scheme: TncPinyinInputScheme;
+    const quick_input_active: Boolean): TncPinyinDiagnosticSpans;
 var
     text: string;
     marks: TArray<Integer>;
@@ -293,6 +297,7 @@ var
 begin
     Result := nil;
     if (raw_text = '') or (Length(raw_text) > c_max_diagnostic_length) then Exit;
+    if quick_input_active then Exit;
     text := LowerCase(raw_text);
     if not nc_is_shuangpin_scheme(scheme) then
         text := StringReplace(text, #$00FC, 'v', [rfReplaceAll]);
@@ -325,11 +330,14 @@ begin
 end;
 
 function TncPinyinInputDiagnostics.check(const raw_text: string;
-    const scheme: TncPinyinInputScheme): TncPinyinDiagnosticSpans;
+    const scheme: TncPinyinInputScheme;
+    const quick_input_active: Boolean): TncPinyinDiagnosticSpans;
 begin
-    if (not m_cached) or (m_text <> raw_text) or (m_scheme <> scheme) then
+    if (not m_cached) or (m_text <> raw_text) or (m_scheme <> scheme) or
+        (m_quick_input_active <> quick_input_active) then
     begin
-        m_spans := nc_check_pinyin_input(raw_text, scheme);
+        m_spans := nc_check_pinyin_input(raw_text, scheme, quick_input_active);
+        m_quick_input_active := quick_input_active;
         m_text := raw_text;
         m_scheme := scheme;
         m_cached := True;

@@ -17,10 +17,10 @@ unit nc_char_lm_host;
 
 interface
 
-uses SysUtils, Classes, SyncObjs, Dynlibs, nc_platform_compat, nc_char_lm;
+uses SysUtils, Classes, SyncObjs, Dynlibs, nc_platform_compat, Generics.Collections, nc_char_lm;
 
 type
-    TncCharLmHost = class(TInterfacedObject, IncCharLm, IncCharLmNext)
+    TncCharLmHost = class(TInterfacedObject, IncCharLm, IncCharLmNext, IncCharLmContinue)
     private type
         TCreateModel = function(directory: PAnsiChar; intra_threads: Integer;
             error_text: PAnsiChar; capacity: Integer): Pointer; cdecl;
@@ -30,6 +30,9 @@ type
         TScoreTextsNext = function(handle: Pointer; context: PWideChar; texts: PPWideChar;
             count, min_count, max_nodes: Integer; out_logp: PSingle; next_indices: PInteger;
             next_count, top_k: Integer; out_next_code_points: PCardinal; out_next_logp: PSingle;
+            timeout_ms: Integer; error_text: PAnsiChar; capacity: Integer): Integer; cdecl;
+        TContinueText = function(handle: Pointer; context, prefix: PWideChar;
+            max_chars: Integer; out_text: PWideChar; out_capacity: Integer; out_logp: PSingle;
             timeout_ms: Integer; error_text: PAnsiChar; capacity: Integer): Integer; cdecl;
         TDestroyModel = procedure(handle: Pointer); cdecl;
     private
@@ -42,18 +45,30 @@ type
         m_handle: Pointer;
         m_score: TScoreTexts;
         m_score_next: TScoreTextsNext;
+        m_continue: TContinueText;
         m_destroy: TDestroyModel;
         m_gate: TCriticalSection;
+        m_plain_gate: TCriticalSection;
         m_foreground_waiting: Integer;
+        // Scores of small requests without context, by their texts: the same
+        // call always gives the same scores, and short words recur.
+        m_plain_cache: TDictionary<string, TArray<Single>>;
+        function plain_cache_key(const context: string; const texts: TArray<string>;
+            const min_count: Integer; const next_texts: TArray<Integer>): string;
+        function plain_cache_get(const key: string; out logp: TArray<Single>): Boolean;
+        procedure plain_cache_put(const key: string; const logp: TArray<Single>);
         procedure load;
         function enter_foreground: Boolean;
         function run_score(const context: string; const texts: TArray<string>;
             const min_count, max_nodes: Integer; const next_texts: TArray<Integer>;
             const top_k: Integer; out logp: TArray<Single>; out next_chars: TArray<string>;
             out next_logp: TArray<Single>): Integer;
+        function run_continue(const context, text: string; const max_chars: Integer;
+            out chars: TArray<string>; out logp: TArray<Single>): Integer;
     public
+        // intra_threads <= 0 uses nc_shared_lm_threads.
         constructor Create(const directory: string; background: Boolean;
-            intra_threads: Integer = 4; timeout_ms: Integer = 100);
+            intra_threads: Integer = 0; timeout_ms: Integer = 100);
         destructor Destroy; override;
         function char_lm_ready: Boolean;
         function score_texts(const context: string; const texts: TArray<string>;
@@ -68,14 +83,55 @@ type
             const min_count, max_nodes: Integer; const next_texts: TArray<Integer>;
             const top_k: Integer; out logp: TArray<Single>; out next_chars: TArray<string>;
             out next_logp: TArray<Single>): Integer;
+        function continue_text(const context, text: string; const max_chars: Integer;
+            out chars: TArray<string>; out logp: TArray<Single>): Integer;
+        function continue_text_background(const context, text: string;
+            const max_chars: Integer; out chars: TArray<string>;
+            out logp: TArray<Single>): Integer;
         { The same model for a background worker (see the unit comment). }
         function background_view: IncCharLm;
         property last_error: string read m_error;
     end;
 
+{ ORT intra-op threads for the shared LM session. The repair and shared-LM
+  hosts open one model and share its session (created by whichever loads
+  first), so both ask for the same count: one thread per processor core, at
+  least 4 and at most 8. Every thread of the pool stays busy for the length of
+  a run, so the count is the share of the processors a run takes, and it
+  trades processor time for latency about one to one: on six cores with
+  twelve logical processors, six threads took 10 to 18% less processor time
+  than eight (39% instead of 49% of the processors on the long suite) for
+  runs 4 to 12% longer. One per core leaves the other logical processors to
+  the application being typed into. }
+function nc_shared_lm_threads: Integer;
+
 implementation
 
 uses fpjson, jsonparser, nc_runtime_paths, nc_sha256, nc_io_compat;
+
+// Query physical cores so repair and scoring share a session with one policy.
+function sysctlbyname(name: PAnsiChar; oldp: Pointer; oldlenp: PSizeUInt;
+    newp: Pointer; newlen: SizeUInt): LongInt; cdecl; external 'c';
+
+function processor_core_count: Integer;
+var size: SizeUInt; cores: LongInt;
+begin
+    cores := 0;
+    size := SizeOf(cores);
+    if sysctlbyname('hw.physicalcpu', @cores, @size, nil, 0) <> 0 then cores := 0;
+    Result := cores;
+end;
+
+function nc_shared_lm_threads: Integer;
+begin
+    Result := processor_core_count;
+    if Result <= 0 then
+        Result := GetCPUCount;
+    if Result < 4 then
+        Result := 4
+    else if Result > 8 then
+        Result := 8;
+end;
 
 const
     c_foreground_wait_ms = 60;
@@ -90,7 +146,7 @@ type
         constructor Create(const owner: TncCharLmHost);
     end;
 
-    TncCharLmBackgroundView = class(TInterfacedObject, IncCharLm, IncCharLmNext)
+    TncCharLmBackgroundView = class(TInterfacedObject, IncCharLm, IncCharLmNext, IncCharLmContinue)
     private
         m_host: TncCharLmHost;
         m_keep: IncCharLm;
@@ -103,6 +159,8 @@ type
             const min_count, max_nodes: Integer; const next_texts: TArray<Integer>;
             const top_k: Integer; out logp: TArray<Single>; out next_chars: TArray<string>;
             out next_logp: TArray<Single>): Integer;
+        function continue_text(const context, text: string; const max_chars: Integer;
+            out chars: TArray<string>; out logp: TArray<Single>): Integer;
     end;
 
 constructor TncCharLmBackgroundView.Create(const host: TncCharLmHost);
@@ -130,6 +188,12 @@ function TncCharLmBackgroundView.score_texts_next(const context: string;
 begin
     Result := m_host.score_texts_next_background(context, texts, min_count, max_nodes,
         next_texts, top_k, logp, next_chars, next_logp);
+end;
+
+function TncCharLmBackgroundView.continue_text(const context, text: string;
+    const max_chars: Integer; out chars: TArray<string>; out logp: TArray<Single>): Integer;
+begin
+    Result := m_host.continue_text_background(context, text, max_chars, chars, logp);
 end;
 
 procedure log_model_state(const message_text: string);
@@ -176,8 +240,12 @@ begin
     inherited Create;
     m_directory := ExpandFileName(nc_model_directory(directory));
     m_threads := intra_threads;
+    if m_threads <= 0 then
+        m_threads := nc_shared_lm_threads;
     m_timeout_ms := timeout_ms;
     m_gate := TCriticalSection.Create;
+    m_plain_gate := TCriticalSection.Create;
+    m_plain_cache := TDictionary<string, TArray<Single>>.Create;
     m_signal := TEvent.Create(nil, True, False, '');
     if background then
     begin
@@ -200,7 +268,57 @@ begin
     if m_module <> 0 then UnloadLibrary(m_module);
     m_signal.Free;
     m_gate.Free;
+    m_plain_cache.Free;
+    m_plain_gate.Free;
     inherited;
+end;
+
+function TncCharLmHost.plain_cache_key(const context: string; const texts: TArray<string>;
+    const min_count: Integer; const next_texts: TArray<Integer>): string;
+const
+    // A short-word candidate group: at most eight words, each with its first
+    // one and two characters.
+    c_texts = 24;
+    c_length = 160;
+var i: Integer;
+begin
+    Result := '';
+    if (context <> '') or (Length(next_texts) > 0) or (Length(texts) = 0) or
+        (Length(texts) > c_texts) or (min_count < Length(texts)) then
+        Exit;
+    for i := 0 to High(texts) do
+    begin
+        if i > 0 then Result := Result + #1;
+        Result := Result + texts[i];
+    end;
+    if Length(Result) > c_length then
+        Result := '';
+end;
+
+function TncCharLmHost.plain_cache_get(const key: string; out logp: TArray<Single>): Boolean;
+begin
+    m_plain_gate.Acquire;
+    try
+        Result := m_plain_cache.TryGetValue(key, logp);
+        if Result then
+            logp := Copy(logp);
+    finally
+        m_plain_gate.Release;
+    end;
+end;
+
+procedure TncCharLmHost.plain_cache_put(const key: string; const logp: TArray<Single>);
+const
+    c_entries = 16384;
+begin
+    m_plain_gate.Acquire;
+    try
+        if m_plain_cache.Count >= c_entries then
+            m_plain_cache.Clear;
+        m_plain_cache.AddOrSetValue(key, Copy(logp));
+    finally
+        m_plain_gate.Release;
+    end;
 end;
 
 procedure TncCharLmHost.load;
@@ -227,7 +345,7 @@ begin
         if not (manifest.Find('files') is TJSONObject) then
             raise EInvalidOp.Create('Incomplete character LM manifest');
         files := TJSONObject(manifest.Find('files'));
-        if files.Count <> Length(required_files) then
+        if files.Count < Length(required_files) then
             raise EInvalidOp.Create('Incomplete character LM manifest');
         for name in required_files do
         begin
@@ -245,6 +363,7 @@ begin
         m_score := TScoreTexts(GetProcedureAddress(m_module, 'nc_lm_score'));
         m_score_next := TScoreTextsNext(GetProcedureAddress(m_module, 'nc_lm_score_next'));
         m_destroy := TDestroyModel(GetProcedureAddress(m_module, 'nc_lm_destroy'));
+        m_continue := TContinueText(GetProcedureAddress(m_module, 'nc_lm_continue'));
         if not Assigned(create_model) or not Assigned(m_score) or not Assigned(m_destroy) then
             raise EInvalidOp.Create('Character LM runtime must be rebuilt');
         folder_utf8 := UTF8Encode(folder);
@@ -294,12 +413,17 @@ function TncCharLmHost.score_texts_next(const context: string; const texts: TArr
     const min_count, max_nodes: Integer; const next_texts: TArray<Integer>;
     const top_k: Integer; out logp: TArray<Single>; out next_chars: TArray<string>;
     out next_logp: TArray<Single>): Integer;
+var
+    key: string;
 begin
     Result := -1;
     SetLength(logp, 0);
     SetLength(next_chars, 0);
     SetLength(next_logp, 0);
     if not char_lm_ready then Exit;
+    key := plain_cache_key(context, texts, min_count, next_texts);
+    if (key <> '') and plain_cache_get(key, logp) then
+        Exit(Length(logp));
     InterlockedIncrement(m_foreground_waiting);
     try
         if not enter_foreground then Exit;
@@ -312,24 +436,33 @@ begin
     finally
         m_gate.Release;
     end;
+    if (key <> '') and (Result = Length(texts)) then
+        plain_cache_put(key, logp);
 end;
 
 function TncCharLmHost.score_texts_next_background(const context: string;
     const texts: TArray<string>; const min_count, max_nodes: Integer;
     const next_texts: TArray<Integer>; const top_k: Integer; out logp: TArray<Single>;
     out next_chars: TArray<string>; out next_logp: TArray<Single>): Integer;
+var
+    key: string;
 begin
     Result := -1;
     SetLength(logp, 0);
     SetLength(next_chars, 0);
     SetLength(next_logp, 0);
     if not char_lm_ready then Exit;
+    key := plain_cache_key(context, texts, min_count, next_texts);
+    if (key <> '') and plain_cache_get(key, logp) then
+        Exit(Length(logp));
     while InterlockedCompareExchange(m_foreground_waiting, 0, 0) > 0 do
         Sleep(1);
     m_gate.Acquire;
     try
         Result := run_score(context, texts, min_count, max_nodes, next_texts, top_k, logp,
             next_chars, next_logp);
+        if (key <> '') and (Result = Length(texts)) then
+            plain_cache_put(key, logp);
     finally
         m_gate.Release;
     end;
@@ -390,6 +523,86 @@ begin
     end
     else
         SetLength(logp, Result);
+end;
+
+function TncCharLmHost.run_continue(const context, text: string; const max_chars: Integer;
+    out chars: TArray<string>; out logp: TArray<Single>): Integer;
+var
+    buffer: TArray<WideChar>;
+    error_text: array[0..1023] of AnsiChar;
+    value: string;
+    produced, idx, position: Integer;
+begin
+    Result := -1;
+    SetLength(chars, 0);
+    SetLength(logp, 0);
+    if (not Assigned(m_continue)) or (text = '') or (max_chars < 1) or (max_chars > 32) or
+        (Pos(#0, context) > 0) or (Pos(#0, text) > 0) then Exit;
+    SetLength(buffer, 2 * max_chars + 1);
+    SetLength(logp, max_chars);
+    produced := m_continue(m_handle, PWideChar(context), PWideChar(text), max_chars,
+        @buffer[0], Length(buffer), @logp[0], m_timeout_ms, @error_text[0], Length(error_text));
+    if produced < 0 then
+    begin
+        SetLength(logp, 0);
+        Exit;
+    end;
+    // One element per character; a supplementary character is a surrogate pair.
+    value := PWideChar(@buffer[0]);
+    position := 1;
+    for idx := 0 to produced - 1 do
+    begin
+        if position > Length(value) then Break;
+        if (position < Length(value)) and ((Ord(value[position]) >= $D800) and (Ord(value[position]) <= $DBFF)) then
+        begin
+            chars := chars + [Copy(value, position, 2)];
+            Inc(position, 2);
+        end
+        else
+        begin
+            chars := chars + [string(value[position])];
+            Inc(position);
+        end;
+    end;
+    SetLength(logp, Length(chars));
+    Result := Length(chars);
+end;
+
+function TncCharLmHost.continue_text(const context, text: string; const max_chars: Integer;
+    out chars: TArray<string>; out logp: TArray<Single>): Integer;
+begin
+    Result := -1;
+    SetLength(chars, 0);
+    SetLength(logp, 0);
+    if not char_lm_ready then Exit;
+    InterlockedIncrement(m_foreground_waiting);
+    try
+        if not enter_foreground then Exit;
+    finally
+        InterlockedDecrement(m_foreground_waiting);
+    end;
+    try
+        Result := run_continue(context, text, max_chars, chars, logp);
+    finally
+        m_gate.Release;
+    end;
+end;
+
+function TncCharLmHost.continue_text_background(const context, text: string;
+    const max_chars: Integer; out chars: TArray<string>; out logp: TArray<Single>): Integer;
+begin
+    Result := -1;
+    SetLength(chars, 0);
+    SetLength(logp, 0);
+    if not char_lm_ready then Exit;
+    while InterlockedCompareExchange(m_foreground_waiting, 0, 0) > 0 do
+        Sleep(1);
+    m_gate.Acquire;
+    try
+        Result := run_continue(context, text, max_chars, chars, logp);
+    finally
+        m_gate.Release;
+    end;
 end;
 
 end.

@@ -188,6 +188,17 @@ static CassotisInputActivity systemInputActivity(NSTimeInterval now) {
     return a;
 }
 CassotisInputActivity (*CassotisInputActivitySource)(NSTimeInterval)=systemInputActivity;
+uint16_t CassotisPrecedingDigit(const CassotisDecimalInput &previous,
+    const CassotisInputActivity &activity, NSRange selection) {
+    if(previous.digit<'0' || previous.digit>'9' || !previous.activity.steady || !activity.steady ||
+       activity.inputs-previous.activity.inputs!=1 || activity.modifiers!=previous.activity.modifiers ||
+       selection.length || selection.location!=previous.expectedCaret) return 0;
+    return previous.digit;
+}
+static NSRange clientSelection(id client) {
+    @try { return [client selectedRange]; }
+    @catch(NSException *error) { (void)error; return NSMakeRange(NSNotFound,0); }
+}
 // A synthetic event may carry no usable timestamp; judge it from when it is handled.
 static NSTimeInterval eventTime(NSTimeInterval timestamp, NSTimeInterval now) {
     return timestamp>now-10 && timestamp<=now?timestamp:now;
@@ -246,6 +257,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     NSUInteger _modifiers;
     CassotisModifierTap _tap;
     CassotisInputActivity _seen;
+    CassotisDecimalInput _decimalInput;
     NSUInteger _pollAttempts;
     std::vector<cassotis::Key> _startupKeys;
     NSString *_startupText, *_startupContext;
@@ -360,6 +372,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
 }
 - (void)activate:(id)client {
     BOOL newActivation=!_active || self.client!=client;
+    if(newActivation) _decimalInput={};
     // Some clients activate the next IMK controller before deactivating the
     // old one. End the previous marked range before switching the shared core.
     if(activeSession && activeSession!=self) [activeSession deactivate];
@@ -375,6 +388,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     [NSRunLoop.mainRunLoop addTimer:_timer forMode:NSRunLoopCommonModes];
 }
 - (void)deactivate {
+    _decimalInput={};
     [self cancelModeFeedback];
     [self commit]; _active=NO; [_timer invalidate]; _timer=nil; [_panel orderOut:nil];
     try { if(_engine->connected()) _engine->active(false); } catch(...) { _engine->disconnect(); }
@@ -495,6 +509,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     }
 }
 - (void)recover {
+    _decimalInput={};
     [self cancelModeFeedback];
     // The engine never writes to applications. After an uncertain reply, commit
     // only the last visible raw composition and let the current key pass through.
@@ -540,16 +555,17 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
 }
 - (BOOL)handleEvent:(NSEvent *)event {
     if(!_active) return NO;
+    // Ordinary releases preserve pending completion and the preceding digit.
+    // Modifier-only shortcuts are handled by flagsChanged below.
+    if(event.type==NSEventTypeKeyUp) return NO;
+    const auto preceding=_decimalInput;
+    _decimalInput={};
     // IMK also delivers other NSEvent types here, such as mouse drags. Reading
     // keyCode from a non-key event raises NSInternalInconsistencyException and
     // breaks the input connection, so filter by type first.
-    if(event.type!=NSEventTypeKeyDown && event.type!=NSEventTypeKeyUp &&
+    if(event.type!=NSEventTypeKeyDown &&
        event.type!=NSEventTypeFlagsChanged && event.type!=NSEventTypeLeftMouseDown &&
        event.type!=NSEventTypeRightMouseDown) return NO;
-    // Ordinary releases do not change input state. Sending them as a new
-    // generation would invalidate completion queued by the matching keyDown.
-    // Modifier-only shortcuts are handled by flagsChanged below.
-    if(event.type==NSEventTypeKeyUp) return NO;
     // A modifier press handled late compares the counters with those read
     // for the event before it.
     if(event.type!=NSEventTypeFlagsChanged)
@@ -560,7 +576,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         if(_panel.visible && NSPointInRect(NSEvent.mouseLocation,_panel.frame)) return NO;
         [self commit]; [self cancelModifierGesture]; return NO;
     }
-    BOOL release=event.type==NSEventTypeKeyUp;
+    BOOL release=NO;
     if(event.type==NSEventTypeFlagsChanged) {
         NSUInteger bit=0;
         switch(event.keyCode) {
@@ -576,6 +592,9 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         _modifiers=event.modifierFlags;
     }
     auto key=CassotisTranslateKey(event,release);
+    const auto selection=clientSelection(self.client);
+    if(event.type==NSEventTypeKeyDown && !(key.modifiers&15) && _result.preedit.empty())
+        key.precedingDigit=CassotisPrecedingDigit(preceding,_seen,selection);
     if((key.modifiers&8) || (key.special==5 && (key.modifiers&2)) || event.keyCode==kVK_Function ||
        ((event.modifierFlags&NSEventModifierFlagFunction) && (!key.special || key.special==5))) {
         [self cancelModeFeedback];
@@ -621,9 +640,18 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         }
         if(!release && event.type==NSEventTypeKeyDown) [self syncSurrounding];
         id eventClient=self.client;
+        const bool plainDigit=event.type==NSEventTypeKeyDown && !(key.modifiers&15) &&
+            key.text.size()==1 && key.text[0]>='0' && key.text[0]<='9' && _result.preedit.empty();
         auto result=_engine->key(key);
         if(result.handled || !result.commit.empty() || !result.preedit.empty()) [self apply:result];
         else if(event.type==NSEventTypeKeyDown) [self commit];
+        if(plainDigit && _active && self.client==eventClient && result.preedit.empty() &&
+           (!result.handled || result.commit==key.text ||
+            result.commit==utf8([NSString stringWithFormat:@"%C",(unichar)(0xff10+key.text[0]-'0')]))) {
+            _decimalInput.digit=key.text[0];
+            _decimalInput.activity=_seen;
+            _decimalInput.expectedCaret=selection.location==NSNotFound?NSNotFound:selection.location+1;
+        }
         // Read the authoritative new mode only for the configured mode key;
         // ordinary typing adds no state RPC or work to the input path.
         const auto &modeShortcut=state.shortcuts[0];
@@ -636,6 +664,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     } catch(...) { [self recover]; return NO; }
 }
 - (void)commit {
+    _decimalInput={};
     if(_committing || _result.preedit.empty()) return;
     _committing=YES;
     // Space can confirm just one segment. The IMK commit barrier must flush
@@ -661,6 +690,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     } @finally { _committing=NO; }
 }
 - (void)cancel {
+    _decimalInput={};
     [self cancelModeFeedback];
     [self clearStartup];
     try { if(_engine->connected()) _engine->reset(); } catch(...) { _engine->disconnect(); }
@@ -681,6 +711,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     } catch(...) { [self recover]; }
 }
 - (void)selectCandidate:(NSInteger)index {
+    _decimalInput={};
     if(index!=-1) { [self candidateAction:index remove:NO]; return; }
     if(!_active || _result.preedit.empty() || !_engine->connected()) return;
     try {
@@ -689,8 +720,10 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         [self apply:_engine->key(k)];
     } catch(...) { [self recover]; }
 }
-- (void)deleteCandidate:(NSInteger)index { [self candidateAction:index remove:YES]; }
+- (void)deleteCandidate:(NSInteger)index {
+    _decimalInput={}; [self candidateAction:index remove:YES]; }
 - (void)toggle:(NSInteger)action {
+    _decimalInput={};
     [activeSession commit];
     try {
         cassotis::EngineClient control;
@@ -730,6 +763,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     return menu;
 }
 - (void)showSettings {
+    _decimalInput={};
     [activeSession cancelModeFeedback]; [activeSession commit];
     [CassotisSettingsController.shared showWindow:nil];
 }

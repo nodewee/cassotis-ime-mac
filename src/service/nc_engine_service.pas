@@ -13,7 +13,7 @@ uses
     nc_engine_intf,
     nc_dictionary_sqlite,
     nc_user_dictionary,
-    nc_pinyin_transformer_host,
+    nc_lm_repair_host,
     nc_pinyin_input_diagnostics,
     nc_local_completion_host,
     nc_char_lm, nc_char_lm_host, nc_one_key_rerank_host;
@@ -34,7 +34,7 @@ type
         FStateStore: TncUserDictionary;
         FState: TncEngineState;
         FConfig: TncEngineConfig;
-        FLongNeuralReranker: IncLongNeuralReranker;
+        FLmRepair: IncLongLocalRepair;
         FLocalCompletionHost: TncLocalCompletionHost;
         FCharLm: IncCharLm;
         FOneKeyRerankHost: TncOneKeyRerankHost;
@@ -55,7 +55,6 @@ type
         function ActivateContext(const context: TncEngineContext): Boolean;
         function KeyEventToVirtualKey(const key_event: TncKeyEvent;
             out key_code: Word; out key_state: TncKeyState): Boolean;
-        procedure PrefetchLongNeuralCompletion(const context: TncEngineContext);
         procedure SyncContext(const context: TncEngineContext);
         procedure NormalizeCandidates(var candidates: TncCandidateList;
             const query: string);
@@ -158,7 +157,7 @@ begin
     FEngine := nil;
     FInputDiagnostics := TncPinyinInputDiagnostics.Create;
     FStateStore := nil;
-    FLongNeuralReranker := nil;
+    FLmRepair := nil;
     FLocalCompletionHost := nil;
     FLoadedContextId := c_invalid_context_id;
     FDictionaryError := '';
@@ -214,13 +213,13 @@ begin
     FEngine.set_dictionary_provider(provider);
     FEngine.prewarm_dictionary_caches;
     runtime_directory := ExtractFileDir(ParamStr(0));
-    FLongNeuralReranker := TncPinyinTransformerHostReranker.Create(
+    FLmRepair := TncLmRepairHost.Create(
         runtime_directory, True);
-    FEngine.set_long_neural_reranker(FLongNeuralReranker);
+    FEngine.set_long_local_repair(FLmRepair);
     char_lm_host := TncCharLmHost.Create(runtime_directory, True);
     FCharLm := char_lm_host;
     FEngine.set_char_lm(FCharLm, True, True);
-    FLocalCompletionHost := TncLocalCompletionHost.Create(runtime_directory);
+    FLocalCompletionHost := TncLocalCompletionHost.Create;
     FLocalCompletionHost.SetCharLm(char_lm_host.background_view);
     FOneKeyRerankHost := TncOneKeyRerankHost.Create(char_lm_host.background_view);
 end;
@@ -231,7 +230,7 @@ begin
     FLocalCompletionHost.Free;
     FEngine.Free;
     FInputDiagnostics.Free;
-    FLongNeuralReranker := nil;
+    FLmRepair := nil;
     FCharLm := nil;
     FStateStore.Free;
     FContexts.Free;
@@ -248,6 +247,7 @@ begin
     config.fuzzy_pinyin_rules := state.fuzzy_pinyin_rules;
     config.full_width_mode := state.full_width_mode;
     config.punctuation_full_width := state.punctuation_full_width;
+    config.decimal_period_after_digit := state.decimal_period_after_digit;
     config.candidate_page_size := state.candidate_page_size;
     config.candidate_expand_on_paging := state.candidate_expand_on_paging;
     config.candidate_page_key_scheme :=
@@ -270,6 +270,7 @@ begin
         (old_state.full_width_mode <> new_state.full_width_mode) or
         (old_state.punctuation_full_width <>
         new_state.punctuation_full_width) or
+        (old_state.decimal_period_after_digit <> new_state.decimal_period_after_digit) or
         (old_state.candidate_page_size <>
         new_state.candidate_page_size) or
         (old_state.candidate_expand_on_paging <>
@@ -320,6 +321,7 @@ begin
     next_state.full_width_mode := engine_config.full_width_mode;
     next_state.punctuation_full_width :=
         engine_config.punctuation_full_width;
+    next_state.decimal_period_after_digit := engine_config.decimal_period_after_digit;
     next_state.candidate_page_size := engine_config.candidate_page_size;
     next_state.candidate_expand_on_paging := engine_config.candidate_expand_on_paging;
     next_state.candidate_page_key_scheme :=
@@ -457,16 +459,25 @@ begin
     if FLoadedContextId = context.Id then
         Exit(True);
 
+    FEngine.end_document;
+
     FEngine.Reset;
     SetEngineLeftContext(context);
     key_event := Default(TncKeyEvent);
     for index := 1 to Length(context.Composition) do
     begin
         key_event.text := context.Composition[index];
+        key_event.modifiers := [];
+        if CharInSet(context.Composition[index], ['A'..'Z']) then
+            key_event.modifiers := [km_shift];
+        if (index = 1) and CharInSet(context.Composition[index], ['U','I','V']) and
+            not context.QuickInputExplicitEntry then
+            key_event.modifiers := [km_caps_lock];
         if (not KeyEventToVirtualKey(key_event, key_code, key_state)) or
             (not FEngine.should_handle_key(key_code, key_state)) or
             (not FEngine.process_key(key_code, key_state)) then
         begin
+            FEngine.end_document;
             FEngine.Reset;
             context.ClearComposition;
             Break;
@@ -476,19 +487,6 @@ begin
     SyncContext(context);
 end;
 
-procedure TncEngineService.PrefetchLongNeuralCompletion(const context: TncEngineContext);
-var task: TncLocalCompletionTask;
-begin
-    if (context = nil) or not context.Active or (FEngine = nil) or
-        (FLocalCompletionHost = nil) or
-        (FEngine.get_composition_text = context.Composition) then Exit;
-    task := Default(TncLocalCompletionTask);
-    if not FEngine.get_prefetch_long_neural_completion_request(task.request) then Exit;
-    task.context_id := context.Id;
-    task.context_instance_id := context.InstanceId;
-    task.generation_id := context.Generation;
-    FLocalCompletionHost.Prefetch(task);
-end;
 
 procedure TncEngineService.NormalizeCandidates(var candidates: TncCandidateList;
     const query: string);
@@ -519,7 +517,6 @@ var
     completion: TncOneKeyCompletion;
 begin
     if (context = nil) or (FEngine = nil) then Exit;
-    PrefetchLongNeuralCompletion(context);
     candidates := FEngine.get_candidates;
     NormalizeCandidates(candidates, FEngine.get_last_lookup_key);
     context.UpdateViewport(FConfig.candidate_expand_on_paging,
@@ -550,7 +547,8 @@ begin
     if FEngine.config.input_mode = im_chinese then
     begin
         raw := FEngine.get_composition_text;
-        spans := FInputDiagnostics.check(raw, FEngine.config.pinyin_input_scheme);
+        spans := FInputDiagnostics.check(raw, FEngine.config.pinyin_input_scheme,
+            FEngine.quick_input_active);
         offset := Length(engine_result.preedit_text) - Length(raw);
         if offset >= 0 then
         begin
@@ -564,6 +562,7 @@ begin
         end;
     end;
     engine_result.query_text := FEngine.get_last_lookup_key;
+    engine_result.selection_keys := FEngine.candidate_selection_keys;
     engine_result.candidates := Copy(context.Candidates, 0,
         Length(context.Candidates));
     engine_result.selected_index := context.SelectedIndex;
@@ -673,6 +672,7 @@ function TncEngineService.DestroyContext(const context_id: QWord): Boolean;
 begin
     if FLoadedContextId = context_id then
     begin
+        FEngine.end_document;
         FEngine.Reset;
         FLoadedContextId := c_invalid_context_id;
     end;
@@ -716,6 +716,7 @@ begin
         context.ClearComposition;
         if FLoadedContextId = context_id then
         begin
+            FEngine.end_document;
             FEngine.Reset;
             FLoadedContextId := c_invalid_context_id;
         end;
@@ -815,6 +816,7 @@ begin
         Exit;
     FContexts.ClearCompositions;
     FLoadedContextId := c_invalid_context_id;
+    FEngine.end_document;
     FEngine.Reset;
 end;
 
@@ -939,6 +941,7 @@ begin
     end;
 
     try
+        FEngine.set_punctuation_preceding_char(Char(key_event.punctuation_preceding_char));
         raw_commit_text := '';
         if modifier_release and (shortcut_action = sa_input_mode_toggle) and
             (FState.input_mode = im_chinese) and
@@ -962,6 +965,10 @@ begin
             Exit;
         end;
 
+        if context.Composition = '' then
+            context.QuickInputExplicitEntry := key_state.shift_down and
+                not key_state.caps_lock and
+                ((key_code = Ord('U')) or (key_code = Ord('I')) or (key_code = Ord('V')));
         Result.handled := FEngine.process_key(key_code, key_state);
         if Result.handled then
         begin
@@ -1132,6 +1139,7 @@ end;
 procedure TncEngineService.ClearContexts;
 begin
     FContexts.Clear;
+    FEngine.end_document;
     FEngine.Reset;
     FLoadedContextId := c_invalid_context_id;
 end;

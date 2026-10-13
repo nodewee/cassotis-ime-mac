@@ -17,15 +17,59 @@ type
     TncImportMode = (imBaseDict, imQueryPathPrior, imLmTransition, imCharLm,
         imCharReverseLm, imTransitionCompletion, imCompletionPrior,
         imCompletionLookup, imCompletionCompetition, imCompletionPairAudit,
-        imLongCompletion);
+        imLongCompletion, imShortPromotion);
 
 const
     c_segment_path_separator = #3;
 
 procedure print_usage;
 begin
-    Writeln('Usage: cassotis_ime_dict_init <db_path> <schema_path> [import_path] [base|query_path|lm_transition|char_lm|char_reverse_lm|transition_completion|completion_prior|completion_lookup|completion_competition|completion_pair_audit|long_completion]');
+    Writeln('Usage: cassotis_ime_dict_init <db_path> <schema_path> [import_path] [base|query_path|lm_transition|char_lm|char_reverse_lm|transition_completion|completion_prior|completion_lookup|' +
+        'completion_competition|completion_pair_audit|long_completion|short_promotion]');
     Writeln('       cassotis_ime_dict_init <db_path> <schema_path> --build-contains-index');
+    Writeln('       cassotis_ime_dict_init <db_path> <schema_path> --require-short-promotion');
+end;
+
+{ The runtime reads a short query's promotions from the dictionary instead of
+  a model, so a dictionary without them is quietly worse. Exit code 0 when
+  the dictionary has such rows in the current format; the file is only read. }
+function require_short_promotion(const db_path: string): Integer;
+var
+    conn: TncSqliteConnection;
+    stmt: Psqlite3_stmt;
+    rows: Integer;
+begin
+    rows := 0;
+    conn := TncSqliteConnection.Create(db_path);
+    try
+        stmt := nil;
+        if conn.open(SQLITE_OPEN_READONLY) and conn.prepare(
+            'SELECT COUNT(*) FROM dict_base_short_promotion ' +
+            'WHERE candidates <> ''''', stmt) then
+        begin
+            try
+                if conn.step(stmt) = SQLITE_ROW then
+                begin
+                    rows := conn.ColumnInt(stmt, 0);
+                end;
+            finally
+                conn.finalize(stmt);
+            end;
+        end;
+    finally
+        conn.Free;
+    end;
+    if rows > 0 then
+    begin
+        Writeln(Format('Short promotion rows: %d', [rows]));
+        Result := 0;
+    end
+    else
+    begin
+        Writeln('No short promotion rows in ' + db_path +
+            ': import dict_short_promotion_*.txt with scripts/build_dictionaries.py.');
+        Result := 4;
+    end;
 end;
 
 function split_fields(const value: string; const separator: Char): TArray<string>;
@@ -622,6 +666,10 @@ begin
         begin
             Exit(imCompletionPairAudit);
         end;
+        if Pos('short_promotion', normalized) > 0 then
+        begin
+            Exit(imShortPromotion);
+        end;
         if Pos('char_reverse_lm', normalized) > 0 then
         begin
             Exit(imCharReverseLm);
@@ -681,6 +729,12 @@ begin
         (normalized = 'completion-pair-audit') then
     begin
         Exit(imCompletionPairAudit);
+    end;
+
+    if (normalized = 'short_promotion') or
+        (normalized = 'short-promotion') then
+    begin
+        Exit(imShortPromotion);
     end;
 
     if (normalized = 'char_lm') or (normalized = 'char-lm') or
@@ -910,6 +964,10 @@ const
         'challenger_text, decision, keep_count, switch_count, ' +
         'keep_source_count, switch_source_count, confidence_milli) ' +
         'VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);';
+    insert_short_promotion_sql =
+        'INSERT OR REPLACE INTO dict_base_short_promotion' +
+        '(pinyin, baseline_text, promoted_text, lead, candidates) ' +
+        'VALUES (?1, ?2, ?3, ?4, ?5);';
     insert_char_lm_sql =
         'INSERT OR REPLACE INTO dict_base_char_lm(ngram, score, backoff) VALUES (?1, ?2, ?3);';
     insert_char_reverse_lm_sql =
@@ -974,6 +1032,8 @@ var
     inserted_completion_lookups: Integer;
     inserted_completion_competitions: Integer;
     inserted_completion_pair_audits: Integer;
+    inserted_short_promotions: Integer;
+    promotion_parts: TArray<string>;
     completion_parser: TncPinyinParser;
     jianpin_variants: TArray<string>;
     jianpin_value: string;
@@ -1013,6 +1073,7 @@ begin
     inserted_completion_lookups := 0;
     inserted_completion_competitions := 0;
     inserted_completion_pair_audits := 0;
+    inserted_short_promotions := 0;
     try
         if import_mode = imQueryPathPrior then
         begin
@@ -1246,6 +1307,28 @@ begin
                 Exit;
             end;
             if not conn.prepare(insert_completion_pair_audit_sql,
+                stmt_query_path) then
+            begin
+                Exit;
+            end;
+        end
+        else if import_mode = imShortPromotion then
+        begin
+            if (not conn.exec(
+                'DROP TABLE IF EXISTS dict_base_short_promotion;')) or
+                (not conn.exec(
+                'CREATE TABLE dict_base_short_promotion (' +
+                'pinyin TEXT NOT NULL,' +
+                'baseline_text TEXT NOT NULL,' +
+                'promoted_text TEXT NOT NULL,' +
+                'lead INTEGER NOT NULL DEFAULT 0,' +
+                'candidates TEXT NOT NULL DEFAULT '''',' +
+                'PRIMARY KEY(pinyin, baseline_text)' +
+                ') WITHOUT ROWID;')) then
+            begin
+                Exit;
+            end;
+            if not conn.prepare(insert_short_promotion_sql,
                 stmt_query_path) then
             begin
                 Exit;
@@ -1593,6 +1676,53 @@ begin
                 Continue;
             end;
 
+            if import_mode = imShortPromotion then
+            begin
+                // The key is the engine's own normalized query, kept as written;
+                // the last field names the words and weights of the choice.
+                promotion_parts := split_fields(line, #9);
+                if Length(promotion_parts) <> 5 then
+                begin
+                    Continue;
+                end;
+                pinyin := LowerCase(Trim(promotion_parts[0]));
+                baseline_text := Trim(promotion_parts[1]);
+                challenger_text := Trim(promotion_parts[2]);
+                if (pinyin = '') or (baseline_text = '') or
+                    (challenger_text = '') or
+                    (baseline_text = challenger_text) or
+                    (Trim(promotion_parts[4]) = '') then
+                begin
+                    Continue;
+                end;
+                if (not conn.BindText(stmt_query_path, 1, pinyin)) or
+                    (not conn.BindText(stmt_query_path, 2, baseline_text)) or
+                    (not conn.BindText(stmt_query_path, 3,
+                    challenger_text)) or
+                    (not conn.BindInt(stmt_query_path, 4,
+                    StrToIntDef(Trim(promotion_parts[3]), 0))) or
+                    (not conn.BindText(stmt_query_path, 5,
+                    Trim(promotion_parts[4]))) then
+                begin
+                    has_error := True;
+                    Break;
+                end;
+                rc := conn.step(stmt_query_path);
+                if rc <> SQLITE_DONE then
+                begin
+                    has_error := True;
+                    Break;
+                end;
+                Inc(inserted_short_promotions);
+                if (not conn.reset(stmt_query_path)) or
+                    (not conn.ClearBindings(stmt_query_path)) then
+                begin
+                    has_error := True;
+                    Break;
+                end;
+                Continue;
+            end;
+
             if import_mode = imCompletionPairAudit then
             begin
                 if not split_completion_pair_audit_line(line, context_width,
@@ -1926,6 +2056,12 @@ begin
                 'Imported %d completion pair audit rows from %d lines.',
                 [inserted_completion_pair_audits, line_count]));
         end
+        else if import_mode = imShortPromotion then
+        begin
+            Writeln(Format(
+                'Imported %d short promotion rows from %d lines.',
+                [inserted_short_promotions, line_count]));
+        end
         else
         begin
             Writeln(Format('Imported %d entries (%d jianpin rows, %d compact aliases) from %d lines.',
@@ -1986,6 +2122,11 @@ begin
 
     db_path := ParamStr(1);
     schema_path := ParamStr(2);
+    if (ParamCount >= 3) and
+        SameText(Trim(ParamStr(3)), '--require-short-promotion') then
+    begin
+        Halt(require_short_promotion(db_path));
+    end;
     build_contains_index := (ParamCount >= 3) and
         SameText(Trim(ParamStr(3)), '--build-contains-index');
     if build_contains_index then

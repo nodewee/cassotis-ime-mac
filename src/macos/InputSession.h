@@ -28,6 +28,15 @@ struct CassotisInputActivity {
     NSTimeInterval lastInput=0, lastModifier=0;
     BOOL steady=YES;
 };
+// Tracks only a digit delivered by this session. Caret and global counters
+// reject intervening input even when the application consumed it before IMK.
+struct CassotisDecimalInput {
+    uint16_t digit=0;
+    NSUInteger expectedCaret=NSNotFound;
+    CassotisInputActivity activity;
+};
+uint16_t CassotisPrecedingDigit(const CassotisDecimalInput &previous,
+    const CassotisInputActivity &activity, NSRange selection);
 struct CassotisModifierTap {
     BOOL watched=NO, single=NO; uint32_t inputs=0;
     NSTimeInterval pressed=0, handled=0, lastInput=0;
