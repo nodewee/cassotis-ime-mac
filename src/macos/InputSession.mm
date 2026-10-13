@@ -604,7 +604,22 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         if([self queueStartupKey:key]) return YES;
         [self commit];
     }
-    if(![self ensureReady]) return [self queueStartupKey:key];
+    id eventClient=self.client;
+    const bool plainDigit=event.type==NSEventTypeKeyDown && !(key.modifiers&15) &&
+        key.text.size()==1 && key.text[0]>='0' && key.text[0]<='9' && _result.preedit.empty();
+    auto rememberDigit=[&] {
+        if(!plainDigit || !_active || self.client!=eventClient) return;
+        _decimalInput.digit=key.text[0];
+        _decimalInput.activity=_seen;
+        _decimalInput.expectedCaret=selection.location==NSNotFound?NSNotFound:selection.location+1;
+    };
+    if(![self ensureReady]) {
+        BOOL queued=[self queueStartupKey:key];
+        // Standalone digits pass through while the helper starts. Preserve the
+        // same evidence as the ready path: it may connect before the next period.
+        if(!queued) rememberDigit();
+        return queued;
+    }
     // The engine can become ready here rather than in tick, so a key arriving
     // before the next timer callback must not be read in the mode the previous
     // application left behind.
@@ -639,19 +654,13 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
             [self commit]; [self showSettings]; return YES;
         }
         if(!release && event.type==NSEventTypeKeyDown) [self syncSurrounding];
-        id eventClient=self.client;
-        const bool plainDigit=event.type==NSEventTypeKeyDown && !(key.modifiers&15) &&
-            key.text.size()==1 && key.text[0]>='0' && key.text[0]<='9' && _result.preedit.empty();
         auto result=_engine->key(key);
         if(result.handled || !result.commit.empty() || !result.preedit.empty()) [self apply:result];
         else if(event.type==NSEventTypeKeyDown) [self commit];
-        if(plainDigit && _active && self.client==eventClient && result.preedit.empty() &&
+        if(plainDigit && result.preedit.empty() &&
            (!result.handled || result.commit==key.text ||
-            result.commit==utf8([NSString stringWithFormat:@"%C",(unichar)(0xff10+key.text[0]-'0')]))) {
-            _decimalInput.digit=key.text[0];
-            _decimalInput.activity=_seen;
-            _decimalInput.expectedCaret=selection.location==NSNotFound?NSNotFound:selection.location+1;
-        }
+            result.commit==utf8([NSString stringWithFormat:@"%C",(unichar)(0xff10+key.text[0]-'0')])))
+            rememberDigit();
         // Read the authoritative new mode only for the configured mode key;
         // ordinary typing adds no state RPC or work to the input path.
         const auto &modeShortcut=state.shortcuts[0];
