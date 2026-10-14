@@ -7,6 +7,7 @@
 - Keep original typed keys through typo-corrected partial selection and undo, including swaps across word boundaries (`quanptai`, `jitnian`).
 - Restore both nasal-boundary prefixes for input such as `tiana` and `xinga`, retaining the original boundary, complete candidates, all prefix homophones and stable pages; explicit apostrophe and Double Pinyin boundaries remain authoritative.
 - Fix `ying`, `jiu` and `bu` to prefer 应/應, 就 and 不 in simplified and traditional Chinese.
+- Do not learn a rejected long-sentence completion when the next key only lengthens or rewrites the last syllable (`jid` → `jidu`, `xia` → `xian`); a key that starts a new syllable still records the rejection.
 - Align with Windows and Cassotis Lexicon v2.1.0, including 389 new everyday phrases.
 - Replace all eleven neural graphs with one shared character language model for sentence and word selection, completion, phrase generation and Pinyin-constrained correction; remove the retired graphs, indexes, hosts and compact parameters.
 - Improve the first two long-sentence candidates, and make completed long input follow the same candidate path whether entered at once or key by key.
