@@ -16,7 +16,7 @@
 export CASSOTIS_LEXICON_ROOT="/path/to/cassotis-lexicon"
 ```
 
-该目录必须包含 `data/generated/` 下简繁两套共 26 个生成文本。构建时按 `data/lexicon-inputs.json` 验证输入 SHA-256，再导入 schema 24 数据库；基础词条分别为 249,487 / 252,699；带候选指纹的短词提升表为必需输入，不能省略。词库生成过程和许可见词库项目自身的文档。
+该目录必须包含 `data/generated/` 下简繁两套共 26 个生成文本。构建时按 `data/lexicon-inputs.json` 验证输入 SHA-256，再导入 schema 24 数据库；基础词条分别为 249,876 / 253,088；带候选指纹的短词提升表为必需输入，不能省略。词库生成过程和许可见词库项目自身的文档。
 
 一个共享 ONNX 字符模型、词表和拼音读音表已随源码提供。共享字符模型以 `char_lm.onnx.000`、`.001`、`.002`、`.003` 分片保存，构建时按顺序原子合并并验证 SHA-256；合并文件不提交到 Git，安装应用仅携带合并模型。`data/runtime-assets.sha256` 记录模型和数据库 schema 的校验值。首次构建会下载官方 ONNX Runtime 1.20.1 arm64 发行包，核对固定 SHA-256 后解压。已安装的输入法无需编译器、Python、联网推理或另外下载模型。
 
