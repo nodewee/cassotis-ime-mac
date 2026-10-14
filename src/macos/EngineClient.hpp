@@ -42,7 +42,8 @@ struct Result {
     bool handled = false, pending = false;
     int32_t selected = -1, page = 0, pages = 0;
     std::string commit, preedit, query, completion;
-    std::string selectionKeys = "123456789";
+    std::string selectionKeys = "123456789", rawInput;
+    bool rawSelected = false;
     CompletionSource completionSource = CompletionSource::None;
     std::vector<Candidate> candidates;
     std::vector<CandidatePage> candidatePages;
@@ -60,9 +61,12 @@ struct Shortcut { uint16_t key = 0; uint8_t modifiers = 0; bool disabled = false
 struct State {
     uint8_t mode = 0, dictionary = 0, scheme = 0, flags = 34;
     uint32_t fuzzy = 0;
+    std::string punctuationASCII = "-#*+_=`~[]<>|@";
+    bool autoEnglish = true;
     uint8_t pageKeys = 0, completionKey = 0, pageSize = 5;
     Shortcut shortcuts[5];
 };
+std::string normalizePunctuationASCII(const std::string &value);
 Bytes encodeKey(const Key &key);
 Result decodeResult(const Bytes &data);
 Bytes encodeState(const State &state);

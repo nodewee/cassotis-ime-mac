@@ -721,6 +721,13 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
 }
 - (void)selectCandidate:(NSInteger)index {
     _decimalInput={};
+    if(index==-2) {
+        if(!_active || _result.rawInput.empty() || _result.preedit.empty() || !_engine->connected()) return;
+        cassotis::Candidate expected; expected.text=_result.rawInput;
+        try { [self apply:_engine->candidateAction(_result.candidateRevision,0,-1,false,_result.query,expected)]; }
+        catch(...) { [self recover]; }
+        return;
+    }
     if(index!=-1) { [self candidateAction:index remove:NO]; return; }
     if(!_active || _result.preedit.empty() || !_engine->connected()) return;
     try {

@@ -61,7 +61,7 @@ static bool sameCandidate(const Candidate &a,const Candidate &b) {
     return a.text==b.text && a.comment==b.comment && a.source==b.source && a.kind==b.kind && a.deletable==b.deletable;
 }
 Result decodeResult(const Bytes &data) {
-    Reader r(data); auto version=r.schema(); require(version>=1 && version<=5,"Unsupported result schema"); Result v;
+    Reader r(data); auto version=r.schema(); require(version>=1 && version<=6,"Unsupported result schema"); Result v;
     auto handled=r.u8(); require(handled<=1 && r.u16()==0,"Invalid result flags"); v.handled=handled;
     auto flags=r.u8(); require((flags&~1)==0,"Invalid result flags"); v.pending=flags&1;
     v.selected=int32_t(r.u32()); v.page=int32_t(r.u32()); v.pages=int32_t(r.u32()); auto error=r.u32();
@@ -116,26 +116,46 @@ Result decodeResult(const Bytes &data) {
         require(v.selectionKeys.empty() || v.selectionKeys=="abcd" || v.selectionKeys=="123456789",
             "Invalid candidate selection keys");
     }
+    if(version>=6) {
+        v.rawInput=r.string(); auto selected=r.u8();
+        require(selected<=1 && (v.rawInput.empty() || (v.rawInput.size()>=2 && v.rawInput.size()<=32)) &&
+            std::all_of(v.rawInput.begin(),v.rawInput.end(),[](unsigned char c){return (c>='a' && c<='z') || (c>='A' && c<='Z');}) &&
+            (!selected || (!v.rawInput.empty() && v.page==0)),"Invalid raw input candidate");
+        v.rawSelected=selected;
+    }
     r.end(); require(v.selected>=-1 && v.selected<int32_t(count),"Invalid candidate selection");
     require(v.page>=0 && v.pages>=0 && (v.pages==0 || v.page<v.pages),"Invalid candidate page");
     if(error) throw std::runtime_error("Engine error: "+message);
     return v;
 }
+std::string normalizePunctuationASCII(const std::string &value) {
+    std::string result;
+    for(unsigned char c:value)
+        if(((c>=33 && c<=47) || (c>=58 && c<=64) || (c>=91 && c<=96) || (c>=123 && c<=126)) &&
+            result.find(c)==std::string::npos) result+=c;
+    return result;
+}
 Bytes encodeState(const State &s) {
-    Writer w; w.schema(7); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
+    Writer w; w.schema(8); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
     w.u32(s.fuzzy); w.u8(s.pageKeys); w.u8(s.completionKey); w.u8(s.pageSize); w.u8(0);
     for(auto &k:s.shortcuts) { w.u16(k.key); w.u8(k.modifiers); w.u8(0); }
     uint8_t disabled=0; for(int i=0;i<5;++i) if(s.shortcuts[i].disabled) disabled|=1<<i;
-    w.u8(disabled); w.u8(0); w.u16(0); return w.data;
+    w.u8(disabled); w.u8(0); w.u16(0);
+    w.u8(s.autoEnglish); w.u8(0); w.u16(0); w.string(normalizePunctuationASCII(s.punctuationASCII)); return w.data;
 }
 State decodeState(const Bytes &data) {
-    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=7,"Unsupported state schema"); State s;
+    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=8,"Unsupported state schema"); State s;
     s.mode=r.u8(); s.dictionary=r.u8(); s.scheme=r.u8(); s.flags=r.u8(); s.fuzzy=r.u32();
     s.pageKeys=r.u8(); s.completionKey=r.u8(); s.pageSize=r.u8(); require(r.u8()==0,"Invalid state flags");
     for(auto &k:s.shortcuts) { k.key=r.u16(); k.modifiers=r.u8(); require(r.u8()==0 && !(k.modifiers&~7),"Invalid shortcut"); }
     if(schema>=5) {
         auto mask=r.u8(); require(!(mask&~31) && r.u8()==0 && r.u16()==0,"Invalid shortcut mask");
         for(int i=0;i<5;++i) s.shortcuts[i].disabled=mask&(1<<i);
+    }
+    if(schema>=8) {
+        auto enabled=r.u8(); require(enabled<=1 && r.u8()==0 && r.u16()==0,"Invalid English preference");
+        s.autoEnglish=enabled; s.punctuationASCII=r.string();
+        require(s.punctuationASCII==normalizePunctuationASCII(s.punctuationASCII),"Invalid punctuation symbols");
     }
     r.end(); require(s.mode<=1 && s.dictionary<=1 && s.scheme<=6 && !(s.flags&~(schema>=7?63:schema>=6?31:15)) &&
         s.pageKeys<=3 && s.completionKey<=1 && s.pageSize>=3 && s.pageSize<=9,"Invalid state values");
@@ -207,7 +227,9 @@ Result EngineClient::removeCandidate(int32_t index,const std::string &query,cons
 }
 Result EngineClient::candidateAction(uint64_t revision,int32_t page,int32_t index,bool remove,
     const std::string &query,const Candidate &expected) {
-    require(revision && page>=0 && index>=0 && index<9,"Invalid candidate action");
+    require(revision && page>=0 && index>=-1 && index<9 &&
+        (index!=-1 || (page==0 && !remove && !expected.text.empty() && expected.comment.empty())),
+        "Invalid candidate action");
     Writer w; w.schema(); w.u64(revision); w.u32(uint32_t(page)); w.u32(uint32_t(index)); w.u8(remove);
     w.string(query); w.string(expected.text); w.string(expected.comment);
     try { return decodeResult(transact(19,w.data)); } catch(...) { disconnect();throw; }

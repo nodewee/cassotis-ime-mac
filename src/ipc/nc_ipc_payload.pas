@@ -15,7 +15,7 @@ const
     c_ipc_engine_state_fuzzy_schema_version = 2;
     c_ipc_engine_state_shortcuts_schema_version = 3;
     c_ipc_engine_state_page_size_schema_version = 4;
-    c_ipc_engine_state_schema_version = 7;
+    c_ipc_engine_state_schema_version = 8;
     c_ipc_payload_max_text_bytes = 1024 * 1024;
     c_ipc_payload_max_candidates = 256;
 
@@ -70,7 +70,7 @@ function nc_try_decode_error_payload(const payload: TBytes;
 implementation
 
 uses
-    nc_shortcut;
+    nc_shortcut, nc_config;
 
 const
     c_key_flag_release = $00000001;
@@ -594,7 +594,8 @@ function nc_encode_candidate_action_payload(const revision: QWord;
     const expected_query, expected_text, expected_comment: string): TBytes;
 var writer: TncIpcPayloadWriter;
 begin
-    if (revision = 0) or (page_index < 0) or (candidate_index < 0) or
+    if (revision = 0) or (page_index < 0) or (candidate_index < -1) or
+        ((candidate_index = -1) and ((page_index <> 0) or remove or (expected_text = '') or (expected_comment <> ''))) or
         (candidate_index >= c_max_candidate_page_size) then
         raise EncIpcPayloadError.Create('Invalid candidate action');
     writer := TncIpcPayloadWriter.Create;
@@ -633,7 +634,9 @@ begin
             reader.ReadBoolean(remove) and reader.ReadString(expected_query) and
             reader.ReadString(expected_text) and reader.ReadString(expected_comment);
         if Result and ((revision = 0) or (page_index < 0) or
-            (candidate_index < 0) or (candidate_index >= c_max_candidate_page_size)) then
+            (candidate_index < -1) or
+            ((candidate_index = -1) and ((page_index <> 0) or remove or (expected_text = '') or (expected_comment <> ''))) or
+            (candidate_index >= c_max_candidate_page_size)) then
         begin
             reader.SetError('Invalid candidate action');
             Result := False;
@@ -882,7 +885,7 @@ begin
         if (Ord(engine_result.completion_source) > Ord(High(TncOneKeyCompletionSource))) or
             ((schema_version = 3) and (engine_result.completion_text = '')) then
             raise EncIpcPayloadError.Create('Invalid completion source');
-        if engine_result.candidate_revision <> 0 then schema_version := 5;
+        if engine_result.candidate_revision <> 0 then schema_version := 6;
         if (engine_result.selection_keys <> '') and (engine_result.selection_keys <> 'abcd') and
             (engine_result.selection_keys <> '123456789') then
             raise EncIpcPayloadError.Create('Invalid candidate selection keys');
@@ -948,6 +951,11 @@ begin
             end;
         end;
         if schema_version >= 5 then writer.WriteString(engine_result.selection_keys);
+        if schema_version >= 6 then
+        begin
+            writer.WriteString(engine_result.raw_input_candidate);
+            writer.WriteBoolean(engine_result.raw_input_selected);
+        end;
         Result := writer.Finish;
     finally
         writer.Free;
@@ -969,6 +977,7 @@ var
     row_count, row_candidates: Cardinal;
     row_index, item_index, previous_page: Integer;
     active_page_found: Boolean;
+    raw_ch: Char;
 begin
     nc_initialize_engine_result(engine_result);
     candidate_count := 0;
@@ -976,7 +985,7 @@ begin
     reader := TncIpcPayloadReader.Create(payload);
     try
         Result := ReadPayloadHeaderVersion(reader, version) and
-            ((version >= 1) and (version <= 5)) and
+            ((version >= 1) and (version <= 6)) and
             reader.ReadBoolean(engine_result.handled) and
             reader.ReadUInt16(reserved16) and reader.ReadByte(result_flags) and
             reader.ReadInt32(engine_result.selected_index) and
@@ -989,7 +998,7 @@ begin
             reader.ReadString(engine_result.completion_text) and
             reader.ReadString(engine_result.error_text) and
             reader.ReadUInt32(candidate_count);
-        if (version < 1) or (version > 5) then
+        if (version < 1) or (version > 6) then
             reader.SetError('Unsupported engine result version');
         if Result and ((reserved16 <> 0) or
             ((result_flags and not c_engine_result_known_flags) <> 0)) then
@@ -1114,6 +1123,19 @@ begin
                 (engine_result.selection_keys = '123456789'));
             if not Result then reader.SetError('Invalid candidate selection keys');
         end;
+        if Result and (version >= 6) then
+        begin
+            Result := reader.ReadString(engine_result.raw_input_candidate) and
+                reader.ReadBoolean(engine_result.raw_input_selected) and
+                ((engine_result.raw_input_candidate = '') or
+                ((Length(engine_result.raw_input_candidate) >= 2) and
+                (Length(engine_result.raw_input_candidate) <= 32))) and
+                ((not engine_result.raw_input_selected) or
+                ((engine_result.raw_input_candidate <> '') and (engine_result.page_index = 0)));
+            for raw_ch in engine_result.raw_input_candidate do
+                if not CharInSet(raw_ch, ['a'..'z', 'A'..'Z']) then Result := False;
+            if not Result then reader.SetError('Invalid raw input candidate');
+        end;
         Result := Result and reader.Finish(error_text);
         if not Result then
         begin
@@ -1168,6 +1190,10 @@ begin
         writer.WriteByte(disabled_mask);
         writer.WriteByte(0);
         writer.WriteUInt16(0);
+        writer.WriteBoolean(state.auto_english);
+        writer.WriteByte(0);
+        writer.WriteUInt16(0);
+        writer.WriteString(nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols));
         Result := writer.Finish;
     finally
         writer.Free;
@@ -1244,6 +1270,15 @@ begin
                     shortcut.disabled := (disabled_mask and (1 shl Ord(action))) <> 0;
                     nc_set_shortcut_for_action(state.shortcuts, action, shortcut);
                 end;
+        end;
+        if Result and (version >= 8) then
+        begin
+            Result := reader.ReadBoolean(state.auto_english) and
+                reader.ReadByte(reserved_byte) and reader.ReadUInt16(reserved) and
+                reader.ReadString(state.punctuation_ascii_symbols) and
+                (reserved_byte = 0) and (reserved = 0) and
+                (state.punctuation_ascii_symbols = nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols));
+            if not Result then reader.SetError('Invalid punctuation or English preference');
         end;
         if Result and (input_mode > Ord(High(TncInputMode))) then
         begin

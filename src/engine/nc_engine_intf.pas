@@ -16,6 +16,7 @@ uses
     nc_platform_compat,
     nc_types,
     nc_quick_input,
+    nc_english_input,
     nc_candidate_presentation,
     nc_prefix_completion_policy,
     nc_fixed_top_policy,
@@ -51,6 +52,8 @@ type
         explicit_choice: Boolean;
         literal_choice: Boolean;
         fuzzy_choice: Boolean;
+        // The last key of pinyin was typed after the first key of the rest.
+        boundary_swapped: Boolean;
     end;
 
     TncInferredPathCacheValue = record
@@ -773,6 +776,10 @@ type
         m_last_debug_commit_segment_path: string;
         m_last_lookup_key: string;
         m_last_lookup_normalized_from: string;
+        // The remainder of a partial selection made under a swap-corrected
+        // lookup, when the swap lies in it: its keys stay as typed, its
+        // lookup may be corrected below the usual length.
+        m_partial_tail_swap_key: string;
         m_last_lookup_syllable_count: Integer;
         m_last_three_syllable_partial_preference_kind: Integer;
         m_last_three_syllable_head_exact_text: string;
@@ -878,6 +885,19 @@ type
         m_double_quote_open: Boolean;
         m_page_index: Integer;
         m_selected_index: Integer;
+        m_raw_input_candidate: string;
+        m_raw_input_selected: Boolean;
+        // Why the raw slot is as it is (probes and the debug text).
+        m_raw_input_debug: string;
+        // The last LM comparison of the raw letters with a Chinese reading.
+        m_raw_input_arbitration_key: string;
+        m_raw_input_arbitration_margin: Single;
+        // The input whose letters are selected, lower case; empty when they
+        // are not. The next key reads it: letters stay selected while the
+        // user types on.
+        m_raw_input_sticky: string;
+        // The user selected them by hand (Left or Up, the mouse).
+        m_raw_input_chosen: Boolean;
         m_confirmed_text: string;
         m_confirmed_explicit_choice: Boolean;
         m_recent_partial_prefix_text: string;
@@ -886,6 +906,9 @@ type
         m_last_committed_text: string;
         m_last_committed_pinyin: string;
         m_confirmed_segments: TList<TncConfirmedSegment>;
+        procedure refresh_raw_input_candidate;
+        procedure set_raw_input_selected_by_user(const selected: Boolean);
+        procedure note_raw_input_choice;
         function is_alpha_key(const key_code: Word; const key_state: TncKeyState; out normalized_char: Char;
             out display_char: Char): Boolean;
         function get_candidate_limit: Integer;
@@ -1092,7 +1115,8 @@ type
             const allow_relaxed_split: Boolean = False): TncPinyinParseResult;
         function get_effective_compact_pinyin_unit_count(const input_text: string;
             const allow_relaxed_split: Boolean = False): Integer;
-        function normalize_adjacent_swap_typo(const value: string): string;
+        function normalize_adjacent_swap_typo(const value: string;
+            const allow_short: Boolean = False): string;
         function split_text_units(const input_text: string): TArray<string>;
         function is_common_surname_text(const value: string): Boolean;
         function merge_candidate_lists(const primary_candidates: TncCandidateList;
@@ -1142,15 +1166,16 @@ type
             const input_code: string; const canonical_pinyin: string = '';
             const explicit_choice: Boolean = False;
             const literal_choice: Boolean = False;
-            const fuzzy_choice: Boolean = False);
+            const fuzzy_choice: Boolean = False;
+            const boundary_swapped: Boolean = False);
         function pop_confirmed_segment(out out_segment: TncConfirmedSegment): Boolean;
         procedure rebuild_confirmed_text;
         function rollback_last_segment: Boolean;
-        procedure apply_partial_commit(const selected_text: string; const remaining_pinyin: string;
+        function apply_partial_commit(const selected_text: string; const remaining_pinyin: string;
             const segment_path: string = ''; const explicit_choice: Boolean = False;
             const remaining_input_code: string = '';
             const literal_choice: Boolean = False;
-            const fuzzy_choice: Boolean = False);
+            const fuzzy_choice: Boolean = False): Boolean;
         procedure update_left_context(const committed_text: string);
         procedure record_context_pair(const left_text: string; const committed_text: string);
         procedure note_session_commit(const text: string);
@@ -1287,6 +1312,10 @@ type
         function get_page_index: Integer;
         function get_page_count: Integer;
         function get_selected_index: Integer;
+        property raw_input_candidate: string read m_raw_input_candidate;
+        property raw_input_selected: Boolean read m_raw_input_selected;
+        property raw_input_debug: string read m_raw_input_debug;
+        function activate_raw_input_candidate: Boolean;
         function next_page: Boolean;
         function prev_page: Boolean;
         function get_composition_text: string;
@@ -1650,6 +1679,7 @@ begin
     m_pending_commit_query_key := '';
     m_last_lookup_key := '';
     m_last_lookup_normalized_from := '';
+    m_partial_tail_swap_key := '';
     m_last_lookup_syllable_count := 0;
     m_last_three_syllable_partial_preference_kind := 0;
     m_last_three_syllable_head_exact_text := '';
@@ -4426,6 +4456,7 @@ begin
     // confirmed text and the contexts are not part of it.
     m_last_lookup_key := '';
     m_last_lookup_normalized_from := '';
+    m_partial_tail_swap_key := '';
     m_last_lookup_syllable_count := 0;
     m_last_three_syllable_partial_preference_kind := 0;
     m_last_three_syllable_head_exact_text := '';
@@ -4514,6 +4545,8 @@ end;
 
 procedure TncEngine.reset(const preserve_document_context: Boolean);
 begin
+    m_raw_input_candidate := '';
+    set_raw_input_selected_by_user(False);
     m_quick_input.clear;
     clear_one_key_completion;
     clear_one_key_completion_feedback_target;
@@ -5189,6 +5222,10 @@ begin
             normalize_page_and_selection;
         end;
     end;
+    if (previous_config.auto_english <> m_config.auto_english) or
+        (previous_config.full_width_mode <> m_config.full_width_mode) or
+        (previous_config.input_mode <> m_config.input_mode) then
+        refresh_raw_input_candidate;
 end;
 
 procedure TncEngine.configure_dictionary_paths(
@@ -8723,6 +8760,258 @@ begin
         m_long_visible_candidate_pool_source_indices_cache[idx] := idx;
 end;
 
+procedure TncEngine.refresh_raw_input_candidate;
+const
+    // With a Chinese reading of the whole input on the page, the letters go
+    // first when the LM holds them this far above the best such reading, and
+    // are shown without being selected down to this far below it. On chat
+    // text the LM never saw, no word typed in full pinyin lost its place at
+    // these values.
+    c_select_margin = 2.0;
+    c_show_margin = -3.0;
+    // Letters the user committed last time for an input that is also complete
+    // pinyin (name, like): the LM still has a say, this much in their favour.
+    c_learned_bonus = 4.0;
+    c_max_readings = 3;
+    c_initials = ['b', 'p', 'm', 'f', 'd', 't', 'n', 'l', 'g', 'k', 'h', 'j', 'q', 'x',
+        'r', 'z', 'c', 's', 'y', 'w'];
+var
+    raw, key, context, state, shown_reading, sticky: string;
+    candidate: TncCandidate;
+    words, page: TncCandidateList;
+    evidence: TncEnglishEvidence;
+    learned, capital, reading_is_user, one_syllable, complete, two_initials: Boolean;
+    scored, gate, decided, built_reading, chosen, typed_on: Boolean;
+    readings, texts: TArray<string>;
+    scores: TArray<Single>;
+    lm_margin, margin, best: Single;
+    ch: Char;
+    index: Integer;
+
+    procedure offer(const selected: Boolean);
+    begin
+        m_raw_input_candidate := raw;
+        m_raw_input_selected := selected and (m_page_index = 0);
+        if selected then state := 'first' else state := 'shown';
+    end;
+begin
+    sticky := m_raw_input_sticky;
+    chosen := m_raw_input_chosen;
+    m_raw_input_sticky := '';
+    m_raw_input_chosen := False;
+    m_raw_input_candidate := '';
+    m_raw_input_selected := False;
+    m_raw_input_debug := '';
+    if (not m_config.auto_english) or (m_config.input_mode <> im_chinese) or
+        m_config.full_width_mode or is_shuangpin_input or
+        (m_quick_input.kind <> qik_none) then Exit;
+    raw := get_composition_text;
+    if (Length(raw) < 2) or (Length(raw) > 32) then Exit;
+    for ch in raw do
+        if not CharInSet(ch, ['a'..'z', 'A'..'Z']) then Exit;
+    key := LowerCase(raw);
+    // The letters were selected before this key, and the user typed on.
+    typed_on := (sticky <> '') and (Copy(key, 1, Length(sticky)) = sticky);
+    if chosen and (typed_on or (Copy(sticky, 1, Length(key)) = key)) then
+    begin
+        // Selected by hand: that holds while the user types on or deletes,
+        // whatever the page reads now.
+        offer(True);
+        m_raw_input_chosen := m_raw_input_selected;
+        if m_raw_input_selected then m_raw_input_sticky := key;
+        if m_config.debug_mode or nc_english_trace then
+            m_raw_input_debug := '[english state=first chosen=1]';
+        Exit;
+    end;
+    evidence := nc_english_evidence(raw);
+    capital := raw <> key;
+    learned := (m_dictionary <> nil) and
+        SameText(m_dictionary.get_raw_input_choice(key), raw);
+    // One pinyin syllable, complete or still being typed (he, long; to, we).
+    one_syllable := nc_is_pinyin_syllable_prefix(key);
+    // Something has to say that these letters may be wanted as typed.
+    gate := evidence.listed or learned or capital or
+        (evidence.spelled and not evidence.pinyin_like);
+    // Ordinary pinyin stops here: nothing speaks for the letters, and they
+    // are pinyin in progress or the candidates as built already hold a
+    // reading of the whole input.
+    built_reading := evidence.in_progress;
+    if not built_reading then
+        for candidate in m_candidates do
+            if (Trim(candidate.comment) = '') and (candidate.source <> cs_quick_input) and
+                (Trim(candidate.text) <> '') and (Ord(Trim(candidate.text)[1]) > $7F) then
+            begin
+                built_reading := True;
+                Break;
+            end;
+    if built_reading and not (gate or nc_english_trace) then Exit;
+
+    // The Chinese readings of the whole input, best first: what the page
+    // shows, since Space would commit its first. The candidates as built are
+    // not in that order yet (the LM stages of the page assembly come after),
+    // and a phrase of three to five syllables is only written there.
+    if m_page_index = 0 then page := get_candidates else page := m_candidates;
+    reading_is_user := False;
+    for candidate in page do
+        if (Trim(candidate.comment) = '') and (candidate.source <> cs_quick_input) and
+            (Trim(candidate.text) <> '') and (Ord(Trim(candidate.text)[1]) > $7F) then
+        begin
+            if Length(readings) = 0 then reading_is_user := candidate.source = cs_user;
+            readings := readings + [Trim(candidate.text)];
+            if Length(readings) >= c_max_readings then Break;
+        end;
+    if (Length(readings) = 0) and (m_dictionary <> nil) and
+        m_dictionary.lookup_mixed_abbreviation_words(key, words) and (Length(words) > 0) then
+        readings := [Trim(words[0].text)];
+
+    complete := evidence.complete;
+    // Two initials are how most two-syllable words are abbreviated, and
+    // nearly every such pair is also an abbreviation somewhere in the corpora.
+    two_initials := (Length(key) = 2) and CharInSet(key[1], c_initials) and
+        CharInSet(key[2], c_initials);
+    state := 'none';
+    scored := False;
+    lm_margin := 0;
+    margin := 0;
+    shown_reading := '';
+    if Length(readings) > 0 then shown_reading := readings[0];
+    decided := True;
+    if Length(readings) = 0 then
+    begin
+        // The page converts only a part of the input.
+        if capital or learned then
+            offer(True)
+        else if not evidence.in_progress then
+        begin
+            // Not pinyin either. Letters with something to say for them go
+            // first, and stay first while the user types on; anything else
+            // is shown, so that it can be picked.
+            if gate or typed_on then
+                offer(True)
+            else
+                offer(False);
+        end
+        // Pinyin the user may still be typing (the page has no whole reading
+        // before the last syllable is finished, or for two syllables that
+        // are no word): a frequent word or one of the English dictionary
+        // goes first (ok, data, cake), an abbreviation that is merely counted
+        // somewhere does not (daa on the way to "daan"), a single syllable
+        // never.
+        else if evidence.listed and ((evidence.band <= 1) or evidence.dictionary) and
+            not one_syllable then
+            offer(True);
+    end
+    else if not gate then
+        // Pinyin.
+    else if capital then
+        // Typed with Shift: nobody writes pinyin that way.
+        offer(True)
+    else if reading_is_user and not learned then
+        // The user's own word for this input.
+    else if learned and not complete then
+        // The last choice for these letters, which are no complete pinyin.
+        offer(True)
+    else if one_syllable and not learned then
+        // A syllable typed as such.
+    else if two_initials and (evidence.band > 0) and not learned then
+        // An abbreviated word, unless the pair is among the most frequent.
+    else if evidence.listed and (evidence.band >= 2) and (not evidence.dictionary) and
+        not learned then
+        // Letters that are merely counted somewhere in the corpora (jis, tad)
+        // do not challenge a Chinese reading.
+    else
+        decided := False;
+
+    if ((not decided) or nc_english_trace) and (Length(readings) > 0) and
+        (m_char_lm <> nil) and m_char_lm_short_enabled and m_char_lm.char_lm_ready then
+    begin
+        if m_segment_left_context <> '' then context := m_segment_left_context
+        else if m_external_left_context <> '' then context := m_external_left_context
+        else context := m_left_context;
+        texts := [raw] + readings;
+        if m_raw_input_arbitration_key = nc_join_strings(#0, texts) + #0 + context then
+        begin
+            lm_margin := m_raw_input_arbitration_margin;
+            scored := True;
+        end
+        else
+        begin
+            try
+                scored := (m_char_lm.score_texts(context, texts, Length(texts), 96,
+                    scores) = Length(texts)) and (Length(scores) = Length(texts));
+            except
+                scored := False;
+            end;
+            if scored then
+            begin
+                best := scores[1];
+                for index := 2 to High(scores) do
+                    if scores[index] > best then best := scores[index];
+                lm_margin := scores[0] - best;
+                m_raw_input_arbitration_key := nc_join_strings(#0, texts) + #0 + context;
+                m_raw_input_arbitration_margin := lm_margin;
+            end;
+        end;
+    end;
+
+    if not decided then
+    begin
+        margin := lm_margin;
+        if learned then margin := margin + c_learned_bonus;
+        if scored and (margin >= c_select_margin) then offer(True)
+        else if learned or (scored and (margin >= c_show_margin)) then offer(False);
+    end;
+    if m_raw_input_selected then m_raw_input_sticky := key;
+
+    if m_config.debug_mode or nc_english_trace then
+        m_raw_input_debug := Format(
+            '[english state=%s gate=%d listed=%d band=%d spelled=%d pinyin=%d progress=%d ' +
+            'syllable=%d complete=%d initials=%d learned=%d capital=%d readings=%d user=%d ' +
+            'scored=%d lm=%.3f margin=%.3f dictionary=%d whole=%s]',
+            [state, Ord(gate), Ord(evidence.listed), evidence.band, Ord(evidence.spelled),
+            Ord(evidence.pinyin_like), Ord(evidence.in_progress), Ord(one_syllable),
+            Ord(complete), Ord(two_initials),
+            Ord(learned), Ord(capital), Length(readings), Ord(reading_is_user), Ord(scored),
+            lm_margin, margin, Ord(evidence.dictionary), shown_reading]);
+end;
+
+procedure TncEngine.note_raw_input_choice;
+var raw: string; ch: Char;
+begin
+    // The letters as the latest choice of this input; with a part of the
+    // input already chosen there is no such single input.
+    if (m_dictionary = nil) or (m_confirmed_text <> '') or
+        (not m_config.auto_english) or is_shuangpin_input or
+        (m_quick_input.kind <> qik_none) then Exit;
+    raw := get_composition_text;
+    if (Length(raw) < 2) or (Length(raw) > 32) then Exit;
+    for ch in raw do
+        if not CharInSet(ch, ['a'..'z', 'A'..'Z']) then Exit;
+    m_dictionary.record_raw_input_choice(LowerCase(raw), raw);
+end;
+
+procedure TncEngine.set_raw_input_selected_by_user(const selected: Boolean);
+begin
+    // What the user does to the slot is what the next key finds: letters
+    // selected by hand stay selected, and letters the user moved off (to a
+    // Chinese candidate, another page) are not put back by what was typed
+    // before; the rules decide again.
+    m_raw_input_selected := selected;
+    m_raw_input_chosen := selected;
+    if selected then m_raw_input_sticky := LowerCase(get_composition_text)
+    else m_raw_input_sticky := '';
+end;
+
+function TncEngine.activate_raw_input_candidate: Boolean;
+begin
+    Result := m_raw_input_candidate <> '';
+    if not Result then Exit;
+    m_page_index := 0;
+    m_selected_index := 0;
+    set_raw_input_selected_by_user(True);
+    m_candidate_navigation_started := True;
+end;
+
 procedure TncEngine.build_candidates;
 const
     c_completion_emergency_skip_ms = 250;
@@ -8731,7 +9020,15 @@ const
 var
     build_started_at: UInt64;
 begin
-    if build_quick_input_candidates then Exit;
+    m_raw_input_candidate := '';
+    m_raw_input_selected := False;
+    m_raw_input_debug := '';
+    if build_quick_input_candidates then
+    begin
+        // No slot here, and nothing to remember for the next key.
+        set_raw_input_selected_by_user(False);
+        Exit;
+    end;
     build_started_at := nc_monotonic_tick_ms;
     // A fresh page may promote a different reading; let Tab follow it again.
     m_visible_completion_key := '';
@@ -8750,6 +9047,7 @@ begin
     if m_composition_decoded_as_whole then
         clear_keystroke_decode_state;
     build_candidates_core;
+    refresh_raw_input_candidate;
 
     // Once a decimal stops being a quick command, pinyin lookup may have no
     // result. Keep the original input selectable without learning it as a word.
@@ -122418,6 +122716,7 @@ var
         clear_lookup_bonus_caches;
         if m_composition_text = '' then
         begin
+            m_partial_tail_swap_key := '';
             Exit;
         end;
 
@@ -122435,7 +122734,8 @@ var
             not ((m_dictionary <> nil) and
             m_dictionary.lookup_mixed_abbreviation_words(lookup_text, mixed_abbreviation_words)) then
         begin
-            normalized_lookup_text := normalize_adjacent_swap_typo(lookup_text);
+            normalized_lookup_text := normalize_adjacent_swap_typo(lookup_text,
+                (m_partial_tail_swap_key <> '') and (lookup_text = m_partial_tail_swap_key));
             if (normalized_lookup_text <> '') and (not SameText(normalized_lookup_text, lookup_text)) then
             begin
                 m_last_lookup_normalized_from := lookup_text;
@@ -141372,6 +141672,10 @@ function TncEngine.map_punctuation_char(const input_char: Char): string;
 begin
     if get_effective_punctuation_full_width then
     begin
+        if (not m_config.full_width_mode) and
+            (Pos(input_char, m_config.punctuation_ascii_symbols) > 0) then
+            Exit(input_char);
+
         case input_char of
             ',':
                 Result := Char($FF0C);
@@ -145692,7 +145996,8 @@ begin
     Result := Length(syllables);
 end;
 
-function TncEngine.normalize_adjacent_swap_typo(const value: string): string;
+function TncEngine.normalize_adjacent_swap_typo(const value: string;
+    const allow_short: Boolean): string;
 const
     c_adjacent_swap_typo_min_query_len = 5;
 var
@@ -145704,7 +146009,8 @@ var
     swap_unit_count: Integer;
 begin
     Result := '';
-    if (value = '') or (Length(value) < c_adjacent_swap_typo_min_query_len) then
+    if (value = '') or (Length(value) < 3) or
+        ((Length(value) < c_adjacent_swap_typo_min_query_len) and not allow_short) then
     begin
         Exit;
     end;
@@ -151656,7 +151962,7 @@ end;
 procedure TncEngine.push_confirmed_segment(const text: string; const pinyin: string;
     const input_code: string; const canonical_pinyin: string;
     const explicit_choice: Boolean; const literal_choice: Boolean;
-    const fuzzy_choice: Boolean);
+    const fuzzy_choice: Boolean; const boundary_swapped: Boolean);
 var
     item: TncConfirmedSegment;
 begin
@@ -151677,6 +151983,7 @@ begin
     item.explicit_choice := explicit_choice;
     item.literal_choice := literal_choice;
     item.fuzzy_choice := fuzzy_choice;
+    item.boundary_swapped := boundary_swapped;
     m_confirmed_segments.Add(item);
     m_confirmed_text := m_confirmed_text + text;
     if Length(split_text_units(Trim(text))) = 1 then
@@ -151731,6 +152038,17 @@ function TncEngine.rollback_last_segment: Boolean;
 var
     segment: TncConfirmedSegment;
     remaining_segment: TncConfirmedSegment;
+
+    // Puts the keys of a segment back in front of the rest, the transposed
+    // pair in the order it was typed.
+    function restored(const keys, rest: string): string;
+    begin
+        if segment.boundary_swapped and (keys <> '') and (rest <> '') then
+            Result := Copy(keys, 1, Length(keys) - 1) + rest[1] + keys[Length(keys)] +
+                Copy(rest, 2, MaxInt)
+        else
+            Result := keys + rest;
+    end;
 begin
     Result := False;
     if not pop_confirmed_segment(segment) then
@@ -151738,6 +152056,7 @@ begin
         Exit;
     end;
     clear_short_exact_pair_tail_handoff;
+    m_partial_tail_swap_key := '';
 
     if is_shuangpin_input then
     begin
@@ -151755,16 +152074,16 @@ begin
     end
     else
     begin
-        m_composition_text := segment.pinyin + m_composition_text;
+        m_composition_text := restored(segment.pinyin, m_composition_text);
         if segment.input_code <> '' then
         begin
-            m_composition_display_text := segment.input_code +
-                m_composition_display_text;
+            m_composition_display_text := restored(segment.input_code,
+                m_composition_display_text);
         end
         else if m_composition_display_text <> '' then
         begin
-            m_composition_display_text := segment.pinyin +
-                m_composition_display_text;
+            m_composition_display_text := restored(segment.pinyin,
+                m_composition_display_text);
         end
         else
         begin
@@ -151786,14 +152105,18 @@ begin
     Result := True;
 end;
 
-procedure TncEngine.apply_partial_commit(const selected_text: string; const remaining_pinyin: string;
+function TncEngine.apply_partial_commit(const selected_text: string; const remaining_pinyin: string;
     const segment_path: string = ''; const explicit_choice: Boolean = False;
     const remaining_input_code: string = '';
     const literal_choice: Boolean = False;
-    const fuzzy_choice: Boolean = False);
+    const fuzzy_choice: Boolean = False): Boolean;
 var
     normalized_pinyin: string;
     prefix_pinyin: string;
+    original_prefix_pinyin: string;
+    effective_remaining_pinyin: string;
+    boundary_swapped: Boolean;
+    display_boundary_swapped: Boolean;
     normalized_remaining_pinyin: string;
     full_input_code: string;
     prefix_input_code: string;
@@ -151901,53 +152224,39 @@ var
         end;
     end;
 begin
+    Result := False;
     if (selected_text = '') or (remaining_pinyin = '') then
     begin
         Exit;
     end;
 
+    // Candidate comments may use a typo-corrected lookup key. Consume only
+    // the corresponding original keys, never replace the unselected tail.
+    if not nc_try_split_pinyin_input(m_composition_text, m_last_lookup_key,
+        remaining_pinyin, original_prefix_pinyin, effective_remaining_pinyin,
+        boundary_swapped, not is_shuangpin_input) then Exit;
     normalized_pinyin := normalize_pinyin_text(m_composition_text);
-    prefix_pinyin := normalized_pinyin;
-    normalized_remaining_pinyin := normalize_pinyin_text(remaining_pinyin);
+    prefix_pinyin := normalize_pinyin_text(original_prefix_pinyin);
+    normalized_remaining_pinyin := normalize_pinyin_text(effective_remaining_pinyin);
     full_input_code := m_composition_display_text;
     if full_input_code = '' then
     begin
         full_input_code := m_composition_text;
     end;
-    effective_remaining_input_code := remaining_input_code;
-    if effective_remaining_input_code = '' then
+    if is_shuangpin_input then
     begin
-        effective_remaining_input_code := remaining_pinyin;
-    end;
-    prefix_input_code := full_input_code;
-    if (effective_remaining_input_code <> '') and
-        (Length(effective_remaining_input_code) <= Length(prefix_input_code)) and
-        SameText(Copy(prefix_input_code,
-        Length(prefix_input_code) - Length(effective_remaining_input_code) + 1,
-        Length(effective_remaining_input_code)), effective_remaining_input_code) then
-    begin
-        prefix_input_code := Copy(prefix_input_code, 1,
-            Length(prefix_input_code) - Length(effective_remaining_input_code));
-    end;
-    if (normalized_remaining_pinyin <> '') and
-        (Length(normalized_remaining_pinyin) <= Length(prefix_pinyin)) then
-    begin
-        if Copy(prefix_pinyin, Length(prefix_pinyin) - Length(normalized_remaining_pinyin) + 1,
-            Length(normalized_remaining_pinyin)) = normalized_remaining_pinyin then
-        begin
-            prefix_pinyin := Copy(prefix_pinyin, 1,
-                Length(prefix_pinyin) - Length(normalized_remaining_pinyin));
-        end;
-    end;
-
-    if prefix_pinyin = '' then
-    begin
-        prefix_pinyin := normalized_pinyin;
-    end;
-    if prefix_input_code = '' then
-    begin
-        prefix_input_code := prefix_pinyin;
-    end;
+        effective_remaining_input_code := remaining_input_code;
+        if (effective_remaining_input_code = '') or
+            (Length(effective_remaining_input_code) >= Length(full_input_code)) or
+            (not SameText(Copy(full_input_code,
+            Length(full_input_code) - Length(effective_remaining_input_code) + 1,
+            MaxInt), effective_remaining_input_code)) then Exit;
+        prefix_input_code := Copy(full_input_code, 1,
+            Length(full_input_code) - Length(effective_remaining_input_code));
+    end
+    else if not nc_try_split_pinyin_input(full_input_code, m_last_lookup_key,
+        remaining_pinyin, prefix_input_code, effective_remaining_input_code,
+        display_boundary_swapped) then Exit;
 
     effective_segment_path := Trim(segment_path);
     if (effective_segment_path = '') and (selected_text <> '') and (prefix_pinyin <> '') then
@@ -152010,12 +152319,19 @@ begin
         m_dictionary.resolve_literal_user_word_pinyin(prefix_pinyin,
             selected_text, canonical_prefix_pinyin);
     end;
-    push_confirmed_segment(selected_text, prefix_pinyin, prefix_input_code,
+    push_confirmed_segment(selected_text, original_prefix_pinyin, prefix_input_code,
         canonical_prefix_pinyin, explicit_choice, literal_choice,
-        fuzzy_choice);
+        fuzzy_choice, boundary_swapped);
     m_confirmed_explicit_choice := m_confirmed_explicit_choice or explicit_choice;
 
-    m_composition_text := remaining_pinyin;
+    // The keys of the rest stay as typed. Where the candidate showed another
+    // rest, the swap lies in it: let its lookup be corrected, however short.
+    m_partial_tail_swap_key := '';
+    if (not boundary_swapped) and
+        (normalized_remaining_pinyin <> normalize_pinyin_text(remaining_pinyin)) then
+        m_partial_tail_swap_key := normalized_remaining_pinyin;
+
+    m_composition_text := effective_remaining_pinyin;
     m_composition_display_text := effective_remaining_input_code;
     m_pending_commit_text := '';
     m_pending_commit_remaining := '';
@@ -152032,6 +152348,7 @@ begin
     m_page_index := 0;
     build_candidates;
     apply_short_exact_pair_tail_handoff;
+    Result := True;
 end;
 
 procedure TncEngine.set_pending_commit(const text: string; const remaining_pinyin: string = '';
@@ -153665,6 +153982,8 @@ var
                     head_text, tail_pinyin);
                 apply_partial_commit(head_text, tail_pinyin, '', False,
                     get_shuangpin_remaining_input_code_for_partial(head_text));
+                // Do not fall through and commit the literal tail if the raw
+                // input-code boundary could not be validated.
                 Result := True;
             end;
         end;
@@ -154170,6 +154489,13 @@ begin
                 commit_text := punct_text;
                 if m_composition_text <> '' then
                 begin
+                    if m_raw_input_selected then
+                    begin
+                        note_raw_input_choice;
+                        set_pending_commit(get_raw_composition_commit_text + punct_text,
+                            '', False, '', False, '', False, False, '', True);
+                        Exit(True);
+                    end;
                     get_selected_candidate(candidate, m_quick_input.kind <> qik_none);
                     if candidate.source = cs_quick_input then
                     begin
@@ -154193,13 +154519,13 @@ begin
                     begin
                         remaining_pinyin := get_display_remaining_pinyin_for_partial(
                             candidate.text, candidate.comment);
-                        apply_partial_commit(candidate.text, remaining_pinyin,
+                        if apply_partial_commit(candidate.text, remaining_pinyin,
                             selected_segment_path, False,
                             get_shuangpin_remaining_input_code_for_partial(
                             candidate.text), False,
                             is_fuzzy_pinyin_active and
-                            (candidate.fuzzy_cost > 0));
-                        set_pending_commit(punct_text, remaining_pinyin, False);
+                            (candidate.fuzzy_cost > 0)) then
+                            set_pending_commit(punct_text, m_composition_text, False);
                     end
                     else
                     begin
@@ -154306,6 +154632,13 @@ begin
             begin
                 if m_composition_text <> '' then
                 begin
+                    if m_raw_input_selected then
+                    begin
+                        note_raw_input_choice;
+                        set_pending_commit(get_raw_composition_commit_text,
+                            '', False, '', False, '', False, False, '', True);
+                        Exit(True);
+                    end;
                     if get_selected_candidate(candidate, True) then
                     begin
                         // Space confirms the selected candidate with the same
@@ -154325,6 +154658,7 @@ begin
                 if m_composition_text <> '' then
                 begin
                     // Enter should commit raw input text instead of selecting candidate.
+                    note_raw_input_choice;
                     set_pending_commit(get_raw_composition_commit_text);
                     Result := True;
                 end
@@ -154376,6 +154710,13 @@ begin
                     end;
 
                     normalize_page_and_selection;
+                    if (m_page_index = 0) and (m_selected_index = 0) and
+                        (m_raw_input_candidate <> '') then
+                    begin
+                        set_raw_input_selected_by_user(True);
+                        m_candidate_navigation_started := True;
+                        Exit(True);
+                    end;
                     if m_selected_index > 0 then
                     begin
                         m_candidate_navigation_started := True;
@@ -154419,6 +154760,15 @@ begin
                     normalize_page_and_selection;
                     index := get_current_page_candidate_count(page_size);
 
+                    if m_raw_input_selected then
+                    begin
+                        if index = 0 then Exit(True);
+                        set_raw_input_selected_by_user(False);
+                        m_selected_index := 0;
+                        m_candidate_navigation_started := True;
+                        Exit(True);
+                    end;
+
                     if (index > 0) and (m_selected_index < index - 1) then
                     begin
                         m_candidate_navigation_started := True;
@@ -154444,6 +154794,7 @@ begin
                         (index < get_current_page_candidate_count(page_size)) then
                     begin
                         m_selected_index := index;
+                        set_raw_input_selected_by_user(False);
                         if get_selected_candidate(candidate, True) then
                         begin
                             Result := apply_candidate_selection(candidate, index,
@@ -183076,20 +183427,33 @@ var
                 if is_shuangpin_input or (Length(syllables) < 2) or
                     (Pos('''', m_composition_text) > 0) then Exit;
                 first_key := normalize_pinyin_text(syllables[0].text);
-                if (Length(first_key) < 3) or
-                    (Copy(first_key, Length(first_key) - 1, 2) <> 'ng') or
+                if (first_key = '') or
                     (Copy(normalized_pinyin, 1, Length(first_key)) <> first_key) then Exit;
-                head_key := Copy(first_key, 1, Length(first_key) - 1);
+                if (Length(first_key) >= 3) and
+                    (Copy(first_key, Length(first_key) - 1, 2) = 'ng') then
+                    head_key := Copy(first_key, 1, Length(first_key) - 1)
+                else
+                begin
+                    // A greedy split may leave a nasal final on the next
+                    // syllable: tia/na and xin/ga also permit tian/a and xing/a.
+                    // Recover selectable prefixes without changing the decode.
+                    if (Length(normalized_pinyin) <= Length(first_key) + 1) or
+                        not CharInSet(normalized_pinyin[Length(first_key) + 1], ['n', 'g']) or
+                        not CharInSet(normalized_pinyin[Length(first_key) + 2], ['a', 'e', 'o']) then Exit;
+                    head_key := Copy(normalized_pinyin, 1, Length(first_key) + 1);
+                end;
                 if not nc_is_canonical_pinyin_syllable(head_key) then Exit;
                 tail_key := Copy(normalized_pinyin, Length(head_key) + 1, MaxInt);
                 tail_parts := get_effective_compact_pinyin_syllables(tail_key);
-                if (Length(tail_parts) = 0) or (Length(tail_parts[0].text) < 2) or
-                    (tail_parts[0].text[1] <> 'g') then Exit;
+                if Length(tail_parts) = 0 then Exit;
+                if (Length(head_key) < Length(first_key)) and
+                    ((Length(tail_parts[0].text) < 2) or
+                    (tail_parts[0].text[1] <> 'g')) then Exit;
                 for idx := 0 to High(tail_parts) do
                     if not nc_is_canonical_pinyin_syllable(tail_parts[idx].text) then Exit;
                 if not lookup_display_exact_cached(head_key, singles) then Exit;
 
-                // Keep the preferred ng parse. Alternative n/g characters are
+                // Keep the preferred parse. Alternative nasal-boundary characters are
                 // selectable prefixes, not new paths or learned compounds.
                 first_added := -1;
                 for idx := 0 to High(singles) do
@@ -183107,7 +183471,7 @@ var
                 end;
                 if first_added < 0 then Exit;
 
-                // One alternative before the long tail of ng homophones; all
+                // One alternative before the long tail of primary homophones; all
                 // remaining characters stay pageable. Never displace Top1/2
                 // or move a single character ahead of word/exact candidates.
                 insert_at := 0;
@@ -185130,6 +185494,7 @@ begin
         cache_visible_candidate_page(page, sources, page_size);
     end;
     m_selected_index := selected_index;
+    set_raw_input_selected_by_user(False);
     m_candidate_navigation_started := True;
     Result := True;
 end;
@@ -185188,6 +185553,7 @@ begin
         long_visible_candidate_pool_cache_is_current(get_candidate_page_size));
     m_candidate_navigation_started := True;
     m_page_index := target_page;
+    set_raw_input_selected_by_user(False);
     if preserve_selection then
         normalize_page_and_selection
     else
@@ -185256,6 +185622,9 @@ begin
         Result := '';
         Exit;
     end;
+
+    if m_raw_input_selected then
+        Exit(m_confirmed_text + get_raw_composition_commit_text);
 
     display_text := '';
     if m_composition_text <> '' then
@@ -185395,6 +185764,10 @@ begin
         if m_short_phrase_debug <> '' then
         begin
             debug_parts.Add(m_short_phrase_debug);
+        end;
+        if m_raw_input_debug <> '' then
+        begin
+            debug_parts.Add(m_raw_input_debug);
         end;
         if m_last_lookup_timing_info <> '' then
         begin
@@ -186251,7 +186624,7 @@ var
             end;
             append_canonical_segment(confirmed_segment.canonical_pinyin);
             has_nonfull_input := has_nonfull_input or
-                (not is_full_pinyin_key(confirmed_segment.pinyin));
+                (not is_full_pinyin_key(normalize_pinyin_text(confirmed_segment.pinyin)));
         end;
 
         if (not has_nonfull_input) or
@@ -186384,7 +186757,7 @@ begin
         for segment in m_confirmed_segments do
         begin
             fuzzy_commit_choice := fuzzy_commit_choice or segment.fuzzy_choice;
-            full_pinyin := full_pinyin + segment.pinyin;
+            full_pinyin := full_pinyin + normalize_pinyin_text(segment.pinyin);
             append_path_segment(segment.text);
         end;
     end;
@@ -186449,7 +186822,7 @@ begin
                 begin
                     if segment.fuzzy_choice then
                     begin
-                        m_dictionary.record_fuzzy_choice(segment.pinyin,
+                        m_dictionary.record_fuzzy_choice(normalize_pinyin_text(segment.pinyin),
                             segment.text);
                     end;
                 end;

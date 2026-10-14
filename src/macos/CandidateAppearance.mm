@@ -269,9 +269,20 @@ NSView *CassotisCandidateView(const cassotis::Result &r, CGFloat size, NSString 
         if(row.page==r.page) background.activeRowIndex=rows.count;
         NSMutableArray<NSView *> *items=[NSMutableArray array];
         CGFloat currentWidth=0; NSInteger i=0;
+        if(row.page==0 && !r.rawInput.empty()) {
+            BOOL selected=r.rawSelected && r.page==0;
+            CassotisCandidateButton *button=candidateButton(@"",str(r.rawInput),@"",font,
+                selected?colors.selectedText:colors.text,colors.weight,selected,colors);
+            button.tag=-2; button.target=target; button.action=selection;
+            button.accessibilityIdentifier=@"candidate-raw-input";
+            button.accessibilityLabel=[@"英文，" stringByAppendingString:str(r.rawInput)];
+            NSView *item=[[NSView alloc] init]; [item addSubview:button];
+            [items addObject:item]; [background addSubview:item];
+            currentWidth=button.intrinsicContentSize.width+4;
+        }
     for(const auto &c:row.candidates) {
         if(i==9) break;
-        BOOL active=row.page==r.page, selected=active && i==r.selected;
+        BOOL active=row.page==r.page, selected=active && !r.rawSelected && i==r.selected;
         NSInteger tag=active?i:(NSInteger(row.page)+1)*16+i;
         // Keep the actual numbered prefix in the layout even on inactive rows.
         // Spaces have different advances and move every subsequent candidate

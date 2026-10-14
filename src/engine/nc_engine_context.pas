@@ -24,6 +24,8 @@ type
         FQuickInputExplicitEntry: Boolean;
         FCandidates: TncCandidateList;
         FSelectedIndex: Integer;
+        FRawInputCandidate: string;
+        FRawInputSelected: Boolean;
         FViewport: TncCandidateViewport;
         FCurrentPage: Integer;
         FCandidatePages: TncCandidatePages;
@@ -45,6 +47,7 @@ type
         procedure AppendComposition(const value: string);
         function DeleteLastCompositionCharacter: Boolean;
         procedure SetCandidates(const value: TncCandidateList);
+        procedure SetRawInput(const value: string; const selected: Boolean);
         procedure UpdateViewport(const enabled, input_changed: Boolean;
             const current_page, total_pages: Integer; const expand_requested: Boolean);
         procedure PublishCandidatePages(const pages: TncCandidatePages);
@@ -69,6 +72,8 @@ type
         property QuickInputExplicitEntry: Boolean read FQuickInputExplicitEntry write FQuickInputExplicitEntry;
         property Candidates: TncCandidateList read FCandidates;
         property SelectedIndex: Integer read FSelectedIndex;
+        property RawInputCandidate: string read FRawInputCandidate;
+        property RawInputSelected: Boolean read FRawInputSelected;
         property Viewport: TncCandidateViewport read FViewport;
         property CandidatePages: TncCandidatePages read FCandidatePages;
         property CandidateRevision: QWord read FCandidateRevision;
@@ -138,6 +143,8 @@ begin
     LongCompletionPending := False;
     OneKeyRerankPending := False;
     FComposition := '';
+    FRawInputCandidate := '';
+    FRawInputSelected := False;
     FQuickInputExplicitEntry := False;
     SetLength(FCandidates, 0);
     FSelectedIndex := -1;
@@ -213,6 +220,13 @@ begin
         Delete(FComposition, Length(FComposition), 1);
         Inc(FCandidateRevision);
     end;
+end;
+
+procedure TncEngineContext.SetRawInput(const value: string; const selected: Boolean);
+begin
+    if (FRawInputCandidate <> value) or (FRawInputSelected <> selected) then Inc(FCandidateRevision);
+    FRawInputCandidate := value;
+    FRawInputSelected := selected;
 end;
 
 procedure TncEngineContext.SetCandidates(const value: TncCandidateList);

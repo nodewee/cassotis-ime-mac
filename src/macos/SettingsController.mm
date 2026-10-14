@@ -22,16 +22,12 @@
 }
 @end
 
-// The input-method process has no application Edit menu. Keep normal macOS
-// editing shortcuts available in its font field without intercepting IMK keys.
-@interface CassotisFontComboBox : NSComboBox
-@end
-@implementation CassotisFontComboBox
-- (BOOL)performKeyEquivalent:(NSEvent *)event {
-    NSTextView *editor=(NSTextView *)self.currentEditor;
+// IMK has no Edit menu; retain normal editing shortcuts in settings fields.
+static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
+    NSTextView *editor=(NSTextView *)control.currentEditor;
     NSUInteger flags=event.modifierFlags&(NSEventModifierFlagCommand|NSEventModifierFlagControl|
         NSEventModifierFlagOption|NSEventModifierFlagShift);
-    if([editor isKindOfClass:NSTextView.class] && self.window.firstResponder==editor &&
+    if([editor isKindOfClass:NSTextView.class] && control.window.firstResponder==editor &&
        (flags==NSEventModifierFlagCommand || flags==(NSEventModifierFlagCommand|NSEventModifierFlagShift))) {
         NSString *key=event.charactersIgnoringModifiers.lowercaseString;
         if([key isEqual:@"z"]) {
@@ -40,23 +36,36 @@
             return YES;
         }
         if(flags==NSEventModifierFlagCommand) {
-            if([key isEqual:@"a"]) { [editor selectAll:self]; return YES; }
-            if([key isEqual:@"c"]) { [editor copy:self]; return YES; }
-            if([key isEqual:@"x"]) { [editor cut:self]; return YES; }
-            if([key isEqual:@"v"]) { [editor paste:self]; return YES; }
+            if([key isEqual:@"a"]) { [editor selectAll:control]; return YES; }
+            if([key isEqual:@"c"]) { [editor copy:control]; return YES; }
+            if([key isEqual:@"x"]) { [editor cut:control]; return YES; }
+            if([key isEqual:@"v"]) { [editor paste:control]; return YES; }
         }
     }
-    return [super performKeyEquivalent:event];
+    return NO;
+}
+@interface CassotisFontComboBox : NSComboBox
+@end
+@implementation CassotisFontComboBox
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    return CassotisSettingsFieldKey(self,event) || [super performKeyEquivalent:event];
+}
+@end
+@interface CassotisSettingsTextField : NSTextField
+@end
+@implementation CassotisSettingsTextField
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    return CassotisSettingsFieldKey(self,event) || [super performKeyEquivalent:event];
 }
 @end
 
 @interface CassotisSettingsController () <NSTableViewDataSource,NSTableViewDelegate,NSWindowDelegate,NSComboBoxDelegate,NSComboBoxDataSource>
 @end
 @implementation CassotisSettingsController {
-    NSPopUpButton *_scheme, *_dictionary, *_pageKeys, *_completionKey, *_pageSize, *_theme;
+    NSPopUpButton *_scheme, *_dictionary, *_pageKeys, *_completionKey, *_pageSize, *_theme, *_punctuationPreset;
     NSSlider *_fontSize;
-    NSTextField *_fontSizeLabel, *_status;
-    NSButton *_fullWidth, *_punctuation, *_decimalPeriod, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates, *_rememberMode;
+    NSTextField *_fontSizeLabel, *_status, *_punctuationSymbols;
+    NSButton *_fullWidth, *_punctuation, *_decimalPeriod, *_fuzzy, *_retry, *_resetAppearance, *_logging, *_expandCandidates, *_rememberMode, *_autoEnglish;
     NSComboBox *_fontFamily;
     NSArray<NSString *> *_fontFamilies;
     NSMutableArray<NSButton *> *_rules, *_shortcutEnabled;
@@ -199,12 +208,22 @@
     _fullWidth=[self check:@"使用全角输入" identifier:@"full-width"];
     _punctuation=[self check:@"使用中文标点" identifier:@"chinese-punctuation"];
     _decimalPeriod=[self check:@"连续输入数字后，句号使用小数点" identifier:@"decimal-period-after-digit"];
+    _autoEnglish=[self check:@"识别英文单词，空格上屏" identifier:@"auto-english"];
+    _autoEnglish.toolTip=@"中文全拼、半角输入时生效；保留大小写，中文候选编号不变。";
+    _punctuationSymbols=[[CassotisSettingsTextField alloc] init]; _punctuationSymbols.delegate=self;
+    _punctuationSymbols.accessibilityIdentifier=@"punctuation-ascii-symbols";
+    _punctuationSymbols.placeholderString=@"留空使用标准中文标点";
+    [_punctuationSymbols.widthAnchor constraintEqualToConstant:240].active=YES;
+    _punctuationSymbols.target=self; _punctuationSymbols.action=@selector(punctuationCommitted:);
+    _punctuationPreset=[self popup:@[@"Markdown 预设",@"标准中文标点",@"自定义"] identifier:@"punctuation-preset"];
+    _punctuationPreset.action=@selector(punctuationPresetChanged:);
     // A frontend preference, not engine state: it gates behaviour that lives
     // entirely in the input method process, so it stays editable when the
     // engine is unavailable and is never sent over IPC.
     _rememberMode=[self check:@"按应用记住中英文状态" identifier:@"remember-input-mode"];
     _rememberMode.action=@selector(rememberModeChanged:);
-    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_punctuation,_decimalPeriod,_fullWidth,_rememberMode]],
+    [self section:@"常规" views:@[[self card:@[[self row:@"语言" control:_dictionary],[self row:@"拼音方案" control:_scheme],_autoEnglish,_fullWidth,_rememberMode]],
+        [self card:@[_punctuation,_decimalPeriod,[self row:@"保持半角的符号" control:_punctuationSymbols],[self row:@"标点预设" control:_punctuationPreset]]],
         [self hint:@"按 Space 或数字键选词，Enter 提交拼音原文，Esc 取消输入。单独按下并释放 Shift 切换中英文；开启「按应用记住中英文状态」后，每个应用各自保留上次的选择。"]]];
 
     _theme=[self popup:CassotisCandidateThemeNames() identifier:@"candidate-theme"];
@@ -364,7 +383,39 @@
     if(index!=NSNotFound) [_fontFamily scrollItemAtIndexToVisible:index];
     [self updatePreview];
 }
-- (void)controlTextDidEndEditing:(NSNotification *)notification { if(notification.object==_fontFamily) [self fontCommitted:nil]; }
+- (void)controlTextDidEndEditing:(NSNotification *)notification {
+    if(notification.object==_fontFamily) [self fontCommitted:nil];
+    else if(notification.object==_punctuationSymbols) [self punctuationCommitted:nil];
+}
+- (void)updatePunctuationControls {
+    BOOL enabled=_ready && _punctuation.state!=0 && _fullWidth.state==0;
+    _punctuationSymbols.enabled=enabled; _punctuationPreset.enabled=enabled;
+    [_punctuationPreset selectItemAtIndex:_state.punctuationASCII.empty()?1:
+        _state.punctuationASCII==cassotis::State{}.punctuationASCII?0:2];
+}
+- (void)punctuationCommitted:(id)sender {
+    (void)sender; if(_loading || !_ready || _saving) return;
+    if(_punctuationSymbols.enabled) {
+        std::string draft=_punctuationSymbols.stringValue.UTF8String?:"";
+        auto normalized=cassotis::normalizePunctuationASCII(draft);
+        for(unsigned char c:draft) if(c>32 && normalized.find(c)==std::string::npos) {
+            _punctuationSymbols.stringValue=[NSString stringWithUTF8String:_state.punctuationASCII.c_str()];
+            _status.stringValue=@"请输入半角标点符号；未保存的内容已恢复。";
+            [self updatePunctuationControls]; return;
+        }
+        _state.punctuationASCII=normalized;
+        _punctuationSymbols.stringValue=[NSString stringWithUTF8String:_state.punctuationASCII.c_str()];
+        [self changed:nil];
+    } else _punctuationSymbols.stringValue=[NSString stringWithUTF8String:_state.punctuationASCII.c_str()];
+    [self updatePunctuationControls];
+}
+- (void)punctuationPresetChanged:(id)sender {
+    (void)sender; if(_loading || !_ready || _saving || !_punctuationPreset.enabled) return;
+    NSInteger index=_punctuationPreset.indexOfSelectedItem;
+    if(index==2) { [self.window makeFirstResponder:_punctuationSymbols]; return; }
+    _punctuationSymbols.stringValue=index==0?[NSString stringWithUTF8String:cassotis::State{}.punctuationASCII.c_str()]:@"";
+    [self punctuationCommitted:nil];
+}
 - (void)comboBoxWillPopUp:(NSNotification *)notification { (void)notification; _fontPopupOpen=YES; _fontPicked=NO; }
 - (void)comboBoxSelectionDidChange:(NSNotification *)notification {
     (void)notification;
@@ -392,6 +443,7 @@
     (void)sender; if(_loading || !_ready || _saving) return;
     for(NSButton *rule in _rules) rule.enabled=_fuzzy.state==NSControlStateValueOn;
     _decimalPeriod.enabled=_punctuation.state==NSControlStateValueOn;
+    [self updatePunctuationControls];
     _saving=YES;
     if(![self persistSettings]) {
         NSString *error=_status.stringValue;
@@ -458,6 +510,8 @@
     try {
         if(!engine.connect(CassotisSocketPath().UTF8String)) throw std::runtime_error("正在读取设置，请稍候…");
         _state=engine.state(); _ready=YES;
+        _autoEnglish.state=_state.autoEnglish?NSControlStateValueOn:NSControlStateValueOff;
+        _punctuationSymbols.stringValue=[NSString stringWithUTF8String:_state.punctuationASCII.c_str()];
         [_scheme selectItemAtIndex:_state.scheme]; [_dictionary selectItemAtIndex:_state.dictionary];
         [_pageKeys selectItemAtIndex:_state.pageKeys]; [_completionKey selectItemAtIndex:_state.completionKey];
         [_pageSize selectItemAtIndex:_state.pageSize-3]; _fullWidth.state=(_state.flags&1)?1:0;
@@ -482,8 +536,9 @@
     _fontSize.doubleValue=best; _loading=NO;
     // Do not present placeholder engine state as editable user preferences.
     for(NSControl *control in @[_scheme,_dictionary,_pageKeys,_completionKey,_pageSize,_theme,_fontSize,
-        _fontFamily,_fullWidth,_punctuation,_fuzzy,_resetAppearance,_expandCandidates]) control.enabled=_ready;
+        _fontFamily,_fullWidth,_punctuation,_fuzzy,_resetAppearance,_expandCandidates,_autoEnglish]) control.enabled=_ready;
     _decimalPeriod.enabled=_ready && _punctuation.state!=0;
+    [self updatePunctuationControls];
     for(NSButton *control in _shortcutEnabled) control.enabled=_ready;
     for(NSButton *control in _rules) control.enabled=_ready && _fuzzy.state!=0;
     for(NSUInteger i=0;i<_shortcuts.count;++i) _shortcuts[i].enabled=_ready && _shortcutEnabled[i].state!=0;
@@ -512,6 +567,7 @@
 - (BOOL)persistSettings {
     if(!_ready) { _status.stringValue=@"引擎暂不可用，请重新打开设置后重试。"; return NO; }
     auto state=_state;
+    state.autoEnglish=_autoEnglish.state!=0;
     state.scheme=(uint8_t)_scheme.indexOfSelectedItem; state.dictionary=(uint8_t)_dictionary.indexOfSelectedItem;
     state.pageKeys=(uint8_t)_pageKeys.indexOfSelectedItem; state.completionKey=(uint8_t)_completionKey.indexOfSelectedItem;
     state.pageSize=(uint8_t)(_pageSize.indexOfSelectedItem+3);

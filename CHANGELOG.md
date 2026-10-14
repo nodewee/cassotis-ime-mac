@@ -2,7 +2,12 @@
 
 ## 2.0.0 (build 4, unreleased)
 
-- Align with Windows and Cassotis Lexicon v2.0.0.
+- Add automatically saved ASCII-punctuation exceptions with Markdown, standard Chinese and custom presets. Preserve saved exceptions while disabled by English punctuation or full-width input.
+- Recognize English in Chinese full-Pinyin, half-width mode, preserving case and allowing Space, arrow keys and verified mouse selection without changing Chinese candidate numbering. Remember explicit choices without creating English user words.
+- Keep original typed keys through typo-corrected partial selection and undo, including swaps across word boundaries (`quanptai`, `jitnian`).
+- Restore both nasal-boundary prefixes for input such as `tiana` and `xinga`, retaining the original boundary, complete candidates, all prefix homophones and stable pages; explicit apostrophe and Double Pinyin boundaries remain authoritative.
+- Fix `ying`, `jiu` and `bu` to prefer 应/應, 就 and 不 in simplified and traditional Chinese.
+- Align with Windows and Cassotis Lexicon v2.1.0, including 389 new everyday phrases.
 - Replace all eleven neural graphs with one shared character language model for sentence and word selection, completion, phrase generation and Pinyin-constrained correction; remove the retired graphs, indexes, hosts and compact parameters.
 - Improve the first two long-sentence candidates, and make completed long input follow the same candidate path whether entered at once or key by key.
 - Generate and correct three-to-five-syllable phrases outside the dictionary; preserve fixed exact and learned preferences, and remember explicitly selected phrases.

@@ -248,6 +248,8 @@ begin
     config.full_width_mode := state.full_width_mode;
     config.punctuation_full_width := state.punctuation_full_width;
     config.decimal_period_after_digit := state.decimal_period_after_digit;
+    config.punctuation_ascii_symbols := nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols);
+    config.auto_english := state.auto_english;
     config.candidate_page_size := state.candidate_page_size;
     config.candidate_expand_on_paging := state.candidate_expand_on_paging;
     config.candidate_page_key_scheme :=
@@ -271,6 +273,8 @@ begin
         (old_state.punctuation_full_width <>
         new_state.punctuation_full_width) or
         (old_state.decimal_period_after_digit <> new_state.decimal_period_after_digit) or
+        (old_state.punctuation_ascii_symbols <> new_state.punctuation_ascii_symbols) or
+        (old_state.auto_english <> new_state.auto_english) or
         (old_state.candidate_page_size <>
         new_state.candidate_page_size) or
         (old_state.candidate_expand_on_paging <>
@@ -322,6 +326,8 @@ begin
     next_state.punctuation_full_width :=
         engine_config.punctuation_full_width;
     next_state.decimal_period_after_digit := engine_config.decimal_period_after_digit;
+    next_state.punctuation_ascii_symbols := engine_config.punctuation_ascii_symbols;
+    next_state.auto_english := engine_config.auto_english;
     next_state.candidate_page_size := engine_config.candidate_page_size;
     next_state.candidate_expand_on_paging := engine_config.candidate_expand_on_paging;
     next_state.candidate_page_key_scheme :=
@@ -526,6 +532,7 @@ begin
     FEngine.set_candidate_paging_expanded(context.Viewport.expanded);
     context.SetComposition(FEngine.get_composition_text);
     context.SetCandidates(candidates);
+    context.SetRawInput(FEngine.raw_input_candidate, FEngine.raw_input_selected);
     context.SelectCandidate(FEngine.get_selected_index);
     completion := FEngine.get_one_key_completion;
     context.SetCompletion(completion.full_pinyin, completion.text, completion.source);
@@ -548,7 +555,7 @@ begin
     begin
         raw := FEngine.get_composition_text;
         spans := FInputDiagnostics.check(raw, FEngine.config.pinyin_input_scheme,
-            FEngine.quick_input_active);
+            FEngine.quick_input_active or (FEngine.raw_input_candidate <> ''));
         offset := Length(engine_result.preedit_text) - Length(raw);
         if offset >= 0 then
         begin
@@ -563,6 +570,8 @@ begin
     end;
     engine_result.query_text := FEngine.get_last_lookup_key;
     engine_result.selection_keys := FEngine.candidate_selection_keys;
+    engine_result.raw_input_candidate := FEngine.raw_input_candidate;
+    engine_result.raw_input_selected := FEngine.raw_input_selected;
     engine_result.candidates := Copy(context.Candidates, 0,
         Length(context.Candidates));
     engine_result.selected_index := context.SelectedIndex;
@@ -1056,6 +1065,23 @@ begin
             Result.error_code := c_engine_error_dictionary_unavailable;
             Result.error_text := FDictionaryError;
             Exit;
+        end;
+        if (candidate_index = -1) and (not remove) and (page_index = 0) and
+            (revision <> 0) and (revision = context.CandidateRevision) and
+            (FEngine.get_last_lookup_key = expected_query) and
+            (expected_text <> '') and (expected_comment = '') and
+            (context.RawInputCandidate = expected_text) and
+            (FEngine.raw_input_candidate = expected_text) then
+        begin
+            published := FEngine.get_page_index = 0;
+            for page in context.CandidatePages do
+                published := published or (page.page_index = 0);
+            if published and FEngine.activate_raw_input_candidate then
+            begin
+                key_event := Default(TncKeyEvent);
+                key_event.special_key := sk_space;
+                Exit(ProcessKey(context_id, generation_id, key_event));
+            end;
         end;
         published := False;
         if (revision <> 0) and (revision = context.CandidateRevision) and

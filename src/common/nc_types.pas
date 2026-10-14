@@ -11,6 +11,7 @@ uses
     SysUtils;
 
 const
+    c_markdown_punctuation_ascii_symbols = '-#*+_=`~[]<>|@';
     c_nc_shortcut_config_signature = $4E435348;
     c_default_candidate_font_name = 'Noto Sans CJK SC';
     c_min_candidate_font_size = 7;
@@ -111,6 +112,8 @@ type
         full_width_mode: Boolean;
         punctuation_full_width: Boolean;
         decimal_period_after_digit: Boolean;
+        punctuation_ascii_symbols: string;
+        auto_english: Boolean;
         candidate_page_size: Integer;
         candidate_expand_on_paging: Boolean;
         candidate_page_key_scheme: TncCandidatePageKeyScheme;
@@ -131,6 +134,8 @@ type
         full_width_mode: Boolean;
         punctuation_full_width: Boolean;
         decimal_period_after_digit: Boolean;
+        punctuation_ascii_symbols: string;
+        auto_english: Boolean;
         enable_segment_candidates: Boolean;
         segment_head_only_multi_syllable: Boolean;
         candidate_font_name: string;
@@ -347,6 +352,8 @@ type
         candidate_pages: TncCandidatePages;
         candidate_revision: QWord;
         selection_keys: string;
+        raw_input_candidate: string;
+        raw_input_selected: Boolean;
         completion_text: string;
         completion_source: TncOneKeyCompletionSource;
         error_code: Cardinal;
@@ -453,6 +460,8 @@ begin
     value.candidate_pages := nil;
     value.candidate_revision := 0;
     value.selection_keys := '123456789';
+    value.raw_input_candidate := '';
+    value.raw_input_selected := False;
     value.completion_text := '';
     value.completion_source := okcs_none;
     value.error_code := 0;
@@ -470,6 +479,8 @@ begin
     value.full_width_mode := False;
     value.punctuation_full_width := True;
     value.decimal_period_after_digit := True;
+    value.punctuation_ascii_symbols := c_markdown_punctuation_ascii_symbols;
+    value.auto_english := True;
     value.candidate_page_size := c_default_candidate_page_size;
     value.candidate_page_key_scheme := cpks_minus_plus;
     value.one_key_completion_key := ock_tab;
@@ -548,6 +559,8 @@ begin
         (left_value.fuzzy_pinyin_rules = right_value.fuzzy_pinyin_rules) and
         (left_value.full_width_mode = right_value.full_width_mode) and
         (left_value.decimal_period_after_digit = right_value.decimal_period_after_digit) and
+        (left_value.punctuation_ascii_symbols = right_value.punctuation_ascii_symbols) and
+        (left_value.auto_english = right_value.auto_english) and
         (left_value.punctuation_full_width =
         right_value.punctuation_full_width) and
         (left_value.candidate_page_size =
