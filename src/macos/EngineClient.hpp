@@ -37,7 +37,7 @@ struct CandidatePage {
     std::vector<Candidate> candidates;
 };
 struct PreeditWarning { uint32_t start = 0, length = 0; uint8_t kind = 0; };
-enum class CompletionSource : uint8_t { None, UserExact, BaseExact, Transition, LongTransition, LongNeural, DocumentCopy, ExactTailFallback };
+enum class CompletionSource : uint8_t { None, UserExact, BaseExact, Transition, LongTransition, LongNeural, DocumentCopy, ExactTailFallback, CustomPhrase };
 struct Result {
     bool handled = false, pending = false;
     int32_t selected = -1, page = 0, pages = 0;
@@ -58,11 +58,14 @@ struct Key {
     std::string text;
 };
 struct Shortcut { uint16_t key = 0; uint8_t modifiers = 0; bool disabled = false; };
+struct CustomPhrase { std::string shortcut, text; };
 struct State {
     uint8_t mode = 0, dictionary = 0, scheme = 0, flags = 34;
     uint32_t fuzzy = 0;
     std::string punctuationASCII = "-#*+_=`~[]<>|@";
     bool autoEnglish = true;
+    bool includesCustomPhrases = true;
+    std::vector<CustomPhrase> customPhrases;
     uint8_t pageKeys = 0, completionKey = 0, pageSize = 5;
     Shortcut shortcuts[5];
 };
@@ -94,7 +97,7 @@ public:
     Result removeCandidate(int32_t index, const std::string &query, const Candidate &expected);
     Result candidateAction(uint64_t revision, int32_t page, int32_t index, bool remove,
         const std::string &query, const Candidate &expected);
-    State state();
+    State state(bool includeCustomPhrases = true);
     void setState(const State &state);
     void clearLearning();
 };

@@ -85,7 +85,7 @@ end;
 procedure TncIpcDispatcher.DispatchRequest(const request: TncIpcEnvelope;
     out response: TncIpcEnvelope);
 var
-    active: Boolean;
+    active, include_custom_phrases: Boolean;
     surrounding_text: string;
     cursor_offset: Integer;
     candidate_index, page_index: Integer;
@@ -94,7 +94,7 @@ var
     expected_query, expected_text, expected_comment: string;
     key_event: TncKeyEvent;
     engine_result: TncEngineResult;
-    engine_state: TncEngineState;
+    engine_state, previous_state: TncEngineState;
     payload_error: string;
     operation_succeeded: Boolean;
 begin
@@ -240,12 +240,22 @@ begin
             end;
         imt_get_state:
             begin
-                if not RequireEmptyPayload(request, response) then
+                // Keystroke clients only need flags and shortcuts. Keep the
+                // full phrase list off this hot path; an empty request remains
+                // the backwards-compatible complete settings read.
+                include_custom_phrases := True;
+                if (Length(request.payload) <> 0) and
+                    not nc_try_decode_set_active_payload(request.payload,
+                        include_custom_phrases, payload_error) then
+                begin
+                    SetErrorResponse(request, response,
+                        c_ipc_dispatch_error_invalid_payload, payload_error);
                     Exit;
+                end;
                 operation_succeeded := FEngine.GetState(engine_state);
                 if operation_succeeded then
                     response.payload := nc_encode_engine_state_payload(
-                        engine_state)
+                        engine_state, include_custom_phrases)
                 else
                     SetErrorResponse(request, response,
                         c_ipc_dispatch_error_operation_failed,
@@ -259,6 +269,18 @@ begin
                     SetErrorResponse(request, response,
                         c_ipc_dispatch_error_invalid_payload, payload_error);
                     Exit;
+                end;
+                // Older settings clients cannot express this field. Mode/page
+                // changes from them must not erase the user's phrase list.
+                if (request.payload[0] < 9) and (request.payload[1] = 0) then
+                begin
+                    if not FEngine.GetState(previous_state) then
+                    begin
+                        SetErrorResponse(request, response,
+                            c_ipc_dispatch_error_operation_failed, 'Unable to read engine state');
+                        Exit;
+                    end;
+                    engine_state.custom_phrases := previous_state.custom_phrases;
                 end;
                 operation_succeeded := FEngine.SetState(engine_state);
                 if not operation_succeeded then

@@ -339,7 +339,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     uint8_t remembered=0;
     if(!CassotisRememberedInputMode([self applicationIdentifier],&remembered)) return;
     try {
-        auto state=_engine->state();
+        auto state=_engine->state(false);
         if(state.mode==remembered) return;
         state.mode=remembered;
         _engine->setState(state);
@@ -351,7 +351,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     if(!_engine->connect(utf8(CassotisSocketPath()))) { CassotisStartEngine(); return NO; }
     try {
         _engine->active(true);
-        auto state=_engine->state(); _panel.completionKey=state.completionKey;
+        auto state=_engine->state(false); _panel.completionKey=state.completionKey;
         _inputMode=state.mode; _modeKnown=YES;
         _modeFeedbackDeadline=NSProcessInfo.processInfo.systemUptime+0.4;
         return YES;
@@ -625,7 +625,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     // application left behind.
     [self restoreRememberedInputModeIfPending];
     try {
-        auto state=_engine->state();
+        auto state=_engine->state(false);
         // Match an explicitly configured Option chord against the unmodified
         // layout character. Otherwise leave Option text and dead keys to macOS.
         if((key.modifiers&4) && !key.special) {
@@ -666,7 +666,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         const auto &modeShortcut=state.shortcuts[0];
         if(_active && self.client==eventClient && _engine->connected() &&
            !modeShortcut.disabled && !key.repeat && vk==modeShortcut.key) {
-            auto mode=_engine->state().mode;
+            auto mode=_engine->state(false).mode;
             if(mode!=state.mode) [self showInputMode:mode];
         }
         return result.handled;
@@ -731,7 +731,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     if(index!=-1) { [self candidateAction:index remove:NO]; return; }
     if(!_active || _result.preedit.empty() || !_engine->connected()) return;
     try {
-        cassotis::Key k; auto state=_engine->state();
+        cassotis::Key k; auto state=_engine->state(false);
         if(state.completionKey==0) k.special=6; else k.text="`";
         [self apply:_engine->key(k)];
     } catch(...) { [self recover]; }
@@ -744,7 +744,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
     try {
         cassotis::EngineClient control;
         if(!control.connect(utf8(CassotisSocketPath()))) { CassotisStartEngine(); return; }
-        auto s=control.state();
+        auto s=control.state(false);
         switch(action) { case 0:s.mode^=1;break;case 1:s.dictionary^=1;break;
             case 2:s.flags^=1;break;case 3:s.flags^=2;break;case 4:s.flags^=4;break;default:return; }
         control.setState(s);
@@ -762,7 +762,7 @@ BOOL CassotisModifierTapInterrupted(const CassotisModifierTap &tap, const Cassot
         if(!control.connect(utf8(CassotisSocketPath()))) {
             CassotisStartEngine(); throw std::runtime_error("engine unavailable");
         }
-        auto state=control.state();
+        auto state=control.state(false);
         NSArray *titles=@[state.mode==0?@"切换到英文":@"切换到中文",
             state.dictionary==0?@"切换到繁體中文":@"切换到简体中文",
             (state.flags&1)?@"切换到半角":@"切换到全角",

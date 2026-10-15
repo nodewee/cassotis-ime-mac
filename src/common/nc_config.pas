@@ -100,6 +100,7 @@ begin
     Result.decimal_period_after_digit := True;
     Result.punctuation_ascii_symbols := c_markdown_punctuation_ascii_symbols;
     Result.auto_english := True;
+    Result.custom_phrases := nil;
     Result.enable_segment_candidates := True;
     Result.segment_head_only_multi_syllable := True;
     Result.candidate_font_name := c_default_candidate_font_name;

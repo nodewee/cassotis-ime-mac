@@ -2,6 +2,11 @@
 
 ## 2.0.0 (build 4, unreleased)
 
+- Add an ordered Custom Phrases settings page with explicit Add and Save Changes actions, exact letter shortcuts, literal multiline Tab commits, duplicate priority, and Windows-compatible JSON import/export. Keep numbered candidates and Space unchanged, and protect phrases from asynchronous prediction and learning cleanup.
+- Keep drafts separate from saved custom-phrase rows. Cancelling edits or clearing the form cannot mutate the list; failed writes preserve both the draft and the saved contents.
+- Allow large custom-phrase lists time to finish saving without reporting a premature connection error; keep ordinary input deadlines unchanged.
+- Move the logging controls into Advanced. Keep per-keystroke IPC small even for the maximum custom-phrase list, and preserve phrases when older clients update settings.
+
 - Add automatically saved ASCII-punctuation exceptions with Markdown, standard Chinese and custom presets. Preserve saved exceptions while disabled by English punctuation or full-width input.
 - Recognize English in Chinese full-Pinyin, half-width mode, preserving case and allowing Space, arrow keys and verified mouse selection without changing Chinese candidate numbering. Remember explicit choices without creating English user words.
 - Keep original typed keys through typo-corrected partial selection and undo, including swaps across word boundaries (`quanptai`, `jitnian`).
@@ -9,7 +14,7 @@
 - Fix `ying`, `jiu` and `bu` to prefer 应/應, 就 and 不 in simplified and traditional Chinese.
 - Do not learn a rejected long-sentence completion when the next key only lengthens or rewrites the last syllable (`jid` → `jidu`, `xia` → `xian`); a key that starts a new syllable still records the rejection.
 - Read a three- to five-syllable phrase that is no dictionary entry as a clause inside a sentence when nothing precedes it, and prefer the dictionary's most frequent words there (`shezhizhong` → 设置中, no longer 射之中).
-- Align with Windows and Cassotis Lexicon v2.1.0, including 389 new everyday phrases.
+- Align with the Windows and Cassotis Lexicon v2.2.0 development snapshots (tags pending), including 67 additional reply, set and repository phrases per script on top of the earlier 389 additions.
 - Replace all eleven neural graphs with one shared character language model for sentence and word selection, completion, phrase generation and Pinyin-constrained correction; remove the retired graphs, indexes, hosts and compact parameters.
 - Improve the first two long-sentence candidates, and make completed long input follow the same candidate path whether entered at once or key by key.
 - Generate and correct three-to-five-syllable phrases outside the dictionary; preserve fixed exact and learned preferences, and remember explicitly selected phrases.

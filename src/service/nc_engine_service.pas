@@ -110,6 +110,7 @@ type
 implementation
 
 uses
+    nc_custom_phrases,
     SysUtils,
     nc_config,
     nc_platform_compat,
@@ -250,6 +251,7 @@ begin
     config.decimal_period_after_digit := state.decimal_period_after_digit;
     config.punctuation_ascii_symbols := nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols);
     config.auto_english := state.auto_english;
+    config.custom_phrases := Copy(state.custom_phrases);
     config.candidate_page_size := state.candidate_page_size;
     config.candidate_expand_on_paging := state.candidate_expand_on_paging;
     config.candidate_page_key_scheme :=
@@ -275,6 +277,7 @@ begin
         (old_state.decimal_period_after_digit <> new_state.decimal_period_after_digit) or
         (old_state.punctuation_ascii_symbols <> new_state.punctuation_ascii_symbols) or
         (old_state.auto_english <> new_state.auto_english) or
+        not nc_custom_phrases_equal(old_state.custom_phrases, new_state.custom_phrases) or
         (old_state.candidate_page_size <>
         new_state.candidate_page_size) or
         (old_state.candidate_expand_on_paging <>
@@ -328,6 +331,7 @@ begin
     next_state.decimal_period_after_digit := engine_config.decimal_period_after_digit;
     next_state.punctuation_ascii_symbols := engine_config.punctuation_ascii_symbols;
     next_state.auto_english := engine_config.auto_english;
+    next_state.custom_phrases := Copy(engine_config.custom_phrases);
     next_state.candidate_page_size := engine_config.candidate_page_size;
     next_state.candidate_expand_on_paging := engine_config.candidate_expand_on_paging;
     next_state.candidate_page_key_scheme :=
@@ -750,18 +754,24 @@ function TncEngineService.GetState(out state: TncEngineState): Boolean;
 begin
     SyncStateFromEngine;
     state := FState;
+    state.custom_phrases := Copy(FState.custom_phrases);
     Result := True;
 end;
 
 function TncEngineService.SetState(const state: TncEngineState): Boolean;
 var
     action: TncShortcutAction;
+    phrase: TncCustomPhrase;
     clear_compositions: Boolean;
     next_config: TncEngineConfig;
     previous_config: TncEngineConfig;
     previous_state: TncEngineState;
     dictionary_changed: Boolean;
 begin
+    if Length(state.custom_phrases) > c_custom_phrase_max_count then Exit(False);
+    for phrase in state.custom_phrases do
+        if (nc_custom_phrase_key(phrase.shortcut) <> phrase.shortcut) or
+            (phrase.shortcut = '') or not nc_custom_phrase_text_valid(phrase.text) then Exit(False);
     if (state.candidate_page_size < c_min_candidate_page_size) or
         (state.candidate_page_size > c_max_candidate_page_size) then
         Exit(False);
@@ -810,6 +820,7 @@ begin
     end;
     FConfig := FEngine.Config;
     FState := state;
+    FState.custom_phrases := Copy(state.custom_phrases);
     if clear_compositions then
     begin
         FContexts.ClearCompositions;

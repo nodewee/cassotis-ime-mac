@@ -1,3 +1,4 @@
+#import "CustomPhraseEditor.h"
 #import "CandidateAppearance.h"
 #import "ProductName.h"
 #include <cmath>
@@ -325,11 +326,14 @@ NSView *CassotisCandidateView(const cassotis::Result &r, CGFloat size, NSString 
     NSString *key=completionKey==1?@"`":@"Tab";
     NSString *prefix=r.completion.empty()?@"":[key stringByAppendingString:@"  "];
     BOOL predictive=r.completionSource!=cassotis::CompletionSource::None &&
-        r.completionSource!=cassotis::CompletionSource::ExactTailFallback;
-    NSButton *completion=candidateButton(prefix,str(r.completion),@"",font,predictive?colors.compound:colors.text,colors.muted,NO,colors);
+        r.completionSource!=cassotis::CompletionSource::ExactTailFallback &&
+        r.completionSource!=cassotis::CompletionSource::CustomPhrase;
+    NSString *completionPreview=r.completionSource==cassotis::CompletionSource::CustomPhrase?
+        CassotisCustomPhrasePreview(str(r.completion)):str(r.completion);
+    NSButton *completion=candidateButton(prefix,completionPreview,@"",font,predictive?colors.compound:colors.text,colors.muted,NO,colors);
     completion.tag=-1; completion.target=target; completion.action=selection;
     completion.enabled=!r.completion.empty(); completion.accessibilityIdentifier=@"candidate-completion";
-    completion.accessibilityLabel=r.completion.empty()?@"暂无补全":[@"补全，" stringByAppendingString:str(r.completion)];
+    completion.accessibilityLabel=r.completion.empty()?@"暂无补全":[@"补全，" stringByAppendingString:completionPreview];
     [footer addSubview:completion]; background.completion=completion;
     NSTextField *warning=pinyinWarning(r,font,colors.muted);
     if(warning) { [footer addSubview:warning]; background.warning=warning; }

@@ -103,6 +103,12 @@ type
         open_settings: TncShortcut;
     end;
 
+    TncCustomPhrase = record
+        shortcut: string;
+        text: string;
+    end;
+    TncCustomPhraseList = TArray<TncCustomPhrase>;
+
     TncEngineState = record
         input_mode: TncInputMode;
         dictionary_variant: TncDictionaryVariant;
@@ -114,6 +120,7 @@ type
         decimal_period_after_digit: Boolean;
         punctuation_ascii_symbols: string;
         auto_english: Boolean;
+        custom_phrases: TncCustomPhraseList;
         candidate_page_size: Integer;
         candidate_expand_on_paging: Boolean;
         candidate_page_key_scheme: TncCandidatePageKeyScheme;
@@ -136,6 +143,7 @@ type
         decimal_period_after_digit: Boolean;
         punctuation_ascii_symbols: string;
         auto_english: Boolean;
+        custom_phrases: TncCustomPhraseList;
         enable_segment_candidates: Boolean;
         segment_head_only_multi_syllable: Boolean;
         candidate_font_name: string;
@@ -177,7 +185,8 @@ type
         okcs_long_transition,
         okcs_long_neural,
         okcs_document_copy,
-        okcs_exact_tail_fallback
+        okcs_exact_tail_fallback,
+        okcs_custom_phrase
     );
 
     TncOneKeyCompletion = record
@@ -374,6 +383,8 @@ function nc_join_strings(const separator: string;
 
 implementation
 
+uses nc_custom_phrases;
+
 function TncStringHelper.StartsWith(const prefix: string;
     const ignore_case: Boolean): Boolean;
 begin
@@ -561,6 +572,7 @@ begin
         (left_value.decimal_period_after_digit = right_value.decimal_period_after_digit) and
         (left_value.punctuation_ascii_symbols = right_value.punctuation_ascii_symbols) and
         (left_value.auto_english = right_value.auto_english) and
+        nc_custom_phrases_equal(left_value.custom_phrases, right_value.custom_phrases) and
         (left_value.punctuation_full_width =
         right_value.punctuation_full_width) and
         (left_value.candidate_page_size =

@@ -12,7 +12,8 @@ uses
 
 const
     c_ipc_header_size = 44;
-    c_ipc_max_payload_size = 8 * 1024 * 1024;
+    // 1024 phrases of 4096 UTF-16 code units may need about 12 MiB of UTF-8.
+    c_ipc_max_payload_size = 16 * 1024 * 1024;
     c_ipc_flag_response = $00000001;
     c_ipc_flag_error = $00000002;
     c_ipc_known_flags = c_ipc_flag_response or c_ipc_flag_error;

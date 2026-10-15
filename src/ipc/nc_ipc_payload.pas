@@ -15,7 +15,7 @@ const
     c_ipc_engine_state_fuzzy_schema_version = 2;
     c_ipc_engine_state_shortcuts_schema_version = 3;
     c_ipc_engine_state_page_size_schema_version = 4;
-    c_ipc_engine_state_schema_version = 8;
+    c_ipc_engine_state_schema_version = 9;
     c_ipc_payload_max_text_bytes = 1024 * 1024;
     c_ipc_payload_max_candidates = 256;
 
@@ -57,7 +57,8 @@ function nc_encode_engine_result_payload(const engine_result: TncEngineResult):
 function nc_try_decode_engine_result_payload(const payload: TBytes;
     out engine_result: TncEngineResult; out error_text: string): Boolean;
 
-function nc_encode_engine_state_payload(const state: TncIpcEngineState): TBytes;
+function nc_encode_engine_state_payload(const state: TncIpcEngineState;
+    const include_custom_phrases: Boolean = True): TBytes;
 function nc_try_decode_engine_state_payload(const payload: TBytes;
     out state: TncIpcEngineState; out error_text: string): Boolean;
 
@@ -70,7 +71,7 @@ function nc_try_decode_error_payload(const payload: TBytes;
 implementation
 
 uses
-    nc_shortcut, nc_config;
+    nc_shortcut, nc_config, nc_custom_phrases;
 
 const
     c_key_flag_release = $00000001;
@@ -1147,15 +1148,20 @@ begin
     end;
 end;
 
-function nc_encode_engine_state_payload(const state: TncIpcEngineState): TBytes;
+function nc_encode_engine_state_payload(const state: TncIpcEngineState;
+    const include_custom_phrases: Boolean): TBytes;
 var
     writer: TncIpcPayloadWriter;
     flags, disabled_mask: Byte;
     action: TncShortcutAction;
+    phrase: TncCustomPhrase;
 begin
     writer := TncIpcPayloadWriter.Create;
     try
-        WritePayloadHeaderVersion(writer, c_ipc_engine_state_schema_version);
+        if include_custom_phrases then
+            WritePayloadHeaderVersion(writer, c_ipc_engine_state_schema_version)
+        else
+            WritePayloadHeaderVersion(writer, 8);
         writer.WriteByte(Ord(state.input_mode));
         writer.WriteByte(Ord(state.dictionary_variant));
         writer.WriteByte(Ord(state.pinyin_scheme));
@@ -1194,6 +1200,15 @@ begin
         writer.WriteByte(0);
         writer.WriteUInt16(0);
         writer.WriteString(nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols));
+        if include_custom_phrases then
+        begin
+            writer.WriteUInt32(Length(state.custom_phrases));
+            for phrase in state.custom_phrases do
+            begin
+                writer.WriteString(phrase.shortcut);
+                writer.WriteString(phrase.text);
+            end;
+        end;
         Result := writer.Finish;
     finally
         writer.Free;
@@ -1203,6 +1218,8 @@ end;
 function nc_try_decode_engine_state_payload(const payload: TBytes;
     out state: TncIpcEngineState; out error_text: string): Boolean;
 var
+    phrase_count: Cardinal;
+    phrase_index: Integer;
     disabled_mask: Byte;
     action: TncShortcutAction;
     shortcut: TncShortcut;
@@ -1279,6 +1296,34 @@ begin
                 (reserved_byte = 0) and (reserved = 0) and
                 (state.punctuation_ascii_symbols = nc_normalize_punctuation_ascii_symbols(state.punctuation_ascii_symbols));
             if not Result then reader.SetError('Invalid punctuation or English preference');
+        end;
+        if Result and (version >= 9) then
+        begin
+            Result := reader.ReadUInt32(phrase_count);
+            if Result and (phrase_count > c_custom_phrase_max_count) then
+            begin
+                reader.SetError('Too many custom phrases');
+                Result := False;
+            end;
+            if Result then
+            begin
+                SetLength(state.custom_phrases, phrase_count);
+                for phrase_index := 0 to Integer(phrase_count) - 1 do
+                begin
+                    Result := reader.ReadString(state.custom_phrases[phrase_index].shortcut) and
+                        reader.ReadString(state.custom_phrases[phrase_index].text);
+                    if not Result then Break;
+                    if (state.custom_phrases[phrase_index].shortcut = '') or
+                        (nc_custom_phrase_key(state.custom_phrases[phrase_index].shortcut) <>
+                         state.custom_phrases[phrase_index].shortcut) or
+                        not nc_custom_phrase_text_valid(state.custom_phrases[phrase_index].text) then
+                    begin
+                        reader.SetError('Invalid custom phrase');
+                        Result := False;
+                        Break;
+                    end;
+                end;
+            end;
         end;
         if Result and (input_mode > Ord(High(TncInputMode))) then
         begin

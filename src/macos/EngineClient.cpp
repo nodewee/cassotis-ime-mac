@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 namespace cassotis {
-static constexpr size_t maxPayload = 8 * 1024 * 1024;
+static constexpr size_t maxPayload = 16 * 1024 * 1024;
 static void require(bool ok, const char *message) {
     if (!ok) throw std::runtime_error(message);
 }
@@ -85,7 +85,7 @@ Result decodeResult(const Bytes &data) {
     }
     if(version>=3) {
         auto source=r.u8();
-        require((source>0 || version>=4) && source<=uint8_t(CompletionSource::ExactTailFallback) &&
+        require((source>0 || version>=4) && source<=uint8_t(CompletionSource::CustomPhrase) &&
             ((source==0)==v.completion.empty()) &&
             r.u8()==0 && r.u16()==0,"Invalid completion source");
         v.completionSource=CompletionSource(source);
@@ -136,15 +136,22 @@ std::string normalizePunctuationASCII(const std::string &value) {
     return result;
 }
 Bytes encodeState(const State &s) {
-    Writer w; w.schema(8); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
+    Writer w; w.schema(s.includesCustomPhrases?9:8); w.u8(s.mode); w.u8(s.dictionary); w.u8(s.scheme); w.u8(s.flags);
     w.u32(s.fuzzy); w.u8(s.pageKeys); w.u8(s.completionKey); w.u8(s.pageSize); w.u8(0);
     for(auto &k:s.shortcuts) { w.u16(k.key); w.u8(k.modifiers); w.u8(0); }
     uint8_t disabled=0; for(int i=0;i<5;++i) if(s.shortcuts[i].disabled) disabled|=1<<i;
     w.u8(disabled); w.u8(0); w.u16(0);
-    w.u8(s.autoEnglish); w.u8(0); w.u16(0); w.string(normalizePunctuationASCII(s.punctuationASCII)); return w.data;
+    w.u8(s.autoEnglish); w.u8(0); w.u16(0); w.string(normalizePunctuationASCII(s.punctuationASCII));
+    if(s.includesCustomPhrases) {
+        require(s.customPhrases.size()<=1024,"Too many custom phrases");
+        w.u32(uint32_t(s.customPhrases.size()));
+        for(const auto &phrase:s.customPhrases) { w.string(phrase.shortcut); w.string(phrase.text); }
+    }
+    return w.data;
 }
 State decodeState(const Bytes &data) {
-    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=8,"Unsupported state schema"); State s;
+    Reader r(data); auto schema=r.schema(); require(schema>=4 && schema<=9,"Unsupported state schema"); State s;
+    s.includesCustomPhrases=schema>=9;
     s.mode=r.u8(); s.dictionary=r.u8(); s.scheme=r.u8(); s.flags=r.u8(); s.fuzzy=r.u32();
     s.pageKeys=r.u8(); s.completionKey=r.u8(); s.pageSize=r.u8(); require(r.u8()==0,"Invalid state flags");
     for(auto &k:s.shortcuts) { k.key=r.u16(); k.modifiers=r.u8(); require(r.u8()==0 && !(k.modifiers&~7),"Invalid shortcut"); }
@@ -156,6 +163,16 @@ State decodeState(const Bytes &data) {
         auto enabled=r.u8(); require(enabled<=1 && r.u8()==0 && r.u16()==0,"Invalid English preference");
         s.autoEnglish=enabled; s.punctuationASCII=r.string();
         require(s.punctuationASCII==normalizePunctuationASCII(s.punctuationASCII),"Invalid punctuation symbols");
+    }
+    if(schema>=9) {
+        auto count=r.u32(); require(count<=1024,"Too many custom phrases");
+        for(uint32_t i=0;i<count;++i) {
+            CustomPhrase phrase{r.string(),r.string()};
+            require(!phrase.shortcut.empty() && phrase.shortcut.size()<=32 &&
+                phrase.shortcut.find_first_not_of("abcdefghijklmnopqrstuvwxyz")==std::string::npos &&
+                !phrase.text.empty() && phrase.text.size()<=4096*3,"Invalid custom phrase");
+            s.customPhrases.push_back(std::move(phrase));
+        }
     }
     r.end(); require(s.mode<=1 && s.dictionary<=1 && s.scheme<=6 && !(s.flags&~(schema>=7?63:schema>=6?31:15)) &&
         s.pageKeys<=3 && s.completionKey<=1 && s.pageSize>=3 && s.pageSize<=9,"Invalid state values");
@@ -218,8 +235,10 @@ Result EngineClient::key(const Key &k) {
 Result EngineClient::poll() {
     try { return decodeResult(transact(17,{})); } catch(...) { disconnect();throw; }
 }
-State EngineClient::state() {
-    try { return decodeState(transact(12,{})); } catch(...) { disconnect();throw; }
+State EngineClient::state(bool includeCustomPhrases) {
+    Writer request;
+    if(!includeCustomPhrases) { request.schema();request.u8(0); }
+    try { return decodeState(transact(12,request.data)); } catch(...) { disconnect();throw; }
 }
 Result EngineClient::removeCandidate(int32_t index,const std::string &query,const Candidate &expected) {
     Writer w; w.schema(); w.u32(uint32_t(index)); w.string(query); w.string(expected.text); w.string(expected.comment);
@@ -234,6 +253,12 @@ Result EngineClient::candidateAction(uint64_t revision,int32_t page,int32_t inde
     w.string(query); w.string(expected.text); w.string(expected.comment);
     try { return decodeResult(transact(19,w.data)); } catch(...) { disconnect();throw; }
 }
-void EngineClient::setState(const State &s) { transact(13,encodeState(s)); }
+void EngineClient::setState(const State &s) {
+    auto payload=encodeState(s);
+    // A full phrase list can exceed 12 MiB and its JSON/database write can
+    // take over a second. Allow bounded bulk saves without extending key,
+    // polling or ordinary settings deadlines.
+    transact(13,payload,payload.size()>1024*1024?5000:1000);
+}
 void EngineClient::clearLearning() { transact(16,{}); }
 }

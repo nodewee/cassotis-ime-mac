@@ -1,6 +1,6 @@
 # macOS 实现架构
 
-版本 2.0.0（build 4），对齐 Windows v2.1.0，使用原生 InputMethodKit / AppKit 前端和 Free Pascal 独立引擎。
+版本 2.0.0（build 4），对齐 Windows v2.2.0，使用原生 InputMethodKit / AppKit 前端和 Free Pascal 独立引擎。
 
 ## 模块和进程
 
@@ -26,6 +26,7 @@ flowchart LR
 | `src/macos/CandidatePanel.mm` | 非激活候选窗、补全行、分页、点击和用户词删除 |
 | `src/macos/InputModePanel.mm` | 光标旁的中英文状态气泡、动画、自动收起及安全输入保护 |
 | `src/macos/SettingsController.mm` | 行为设置、快捷键校验与原生显示偏好 |
+| `src/macos/CustomPhraseEditor.*` | 有序短语编辑、显式添加与保存修改及 JSON 导入导出 |
 | `src/service` / `src/ipc` | socket、连接上下文映射、dispatcher 和生产服务 |
 | `src/engine` / `src/dictionary` | Windows/Linux 生产算法、生成模型、SQLite 和学习 |
 | `src/host` | 本地模型宿主、队列、修正/补全和 C++ ONNX 桥接 |
@@ -53,9 +54,9 @@ flowchart LR
 
 ## IPC 与恢复
 
-协议头是 44 字节小端 CSIM v1.0，字段包含类型、标志、request/context/generation 和 payload 长度。一个前端连接固定外部 context 1，服务端分配独立内部 ID。字符串最多 1 MiB、payload 最多 8 MiB，严格检查长度、UTF-8、保留字段、枚举和候选页范围。
+协议头是 44 字节小端 CSIM v1.0，字段包含类型、标志、request/context/generation 和 payload 长度。一个前端连接固定外部 context 1，服务端分配独立内部 ID。字符串最多 1 MiB、payload 最多 16 MiB，严格检查长度、UTF-8、保留字段、枚举和候选页范围。总帧上限容纳合法的最大短语列表，逐键读取不传输该列表。
 
-state schema 6 保留 schema 5 的 40 字节布局，以 flags 的 0x10 位保存候选展开选项；schema 5 的禁用快捷键尾部保持不变，旧 schema 不接受新位；前端兼容读取 schema 4/5/6/7，服务保留更早的解码。用户库使用独立 disabled mask 持久化五个快捷键的禁用状态。
+state schema 6 保留 schema 5 的 40 字节布局，以 flags 的 0x10 位保存候选展开选项；schema 5 的禁用快捷键尾部保持不变，旧 schema 不接受新位；前端兼容读取 schema 4–9，服务保留更早的解码。用户库使用独立 disabled mask 持久化五个快捷键的禁用状态。
 
 所有修改请求推进 generation；读取状态和轮询保留 generation。所有上下文请求（包括异步轮询）都经过连接的内外 ID 映射。异步结果只应用到同一 context/实例/generation，普通按键释放不会作废对应按下产生的补全任务。
 
@@ -75,13 +76,13 @@ helper 在输入源启动时提前启动。socket 尚未连接时，前端最多
 
 异常拼音范围随结果载荷传递，范围为 UTF-16；schema 4 同时包含补全来源及已发布的候选快照，保留读取 schema 1/2/3 的兼容能力。原生前端给对应标记文本添加红色文字与下划线颜色；IMK 或应用可能重建并替换这些属性，因此候选窗底部的补全行同时用红色和下划线显示异常拼音片段。仅错误时显示，修正后清除，不改变输入文本、选区、当前布局的行高、Tab 补全和品牌区。长输入截取首个错误附近的片段，完整拼音保留在提示文本中。正常音节、未完成声母和双拼编码按各自方案判断；重复元音只在有足够输入证据时提示。
 
-核心对齐 Windows 2.1.0，保留 Linux 的 FPC 适配与 macOS 的组合串语义。预测前缀准入由 `nc_prefix_completion_policy` 管理，候选快照和导航稳定性由 `nc_candidate_presentation` 管理；鼻音边界、已确认后缀、短复合词上下文证据、ü 别名和冷启动分页均有独立回归。共享轻量排序的两个局部缓存标志在入口显式初始化。
+核心对齐 Windows 2.2.0，保留 Linux 的 FPC 适配与 macOS 的组合串语义。预测前缀准入由 `nc_prefix_completion_policy` 管理，候选快照和导航稳定性由 `nc_candidate_presentation` 管理；鼻音边界、已确认后缀、短复合词上下文证据、ü 别名和冷启动分页均有独立回归。共享轻量排序的两个局部缓存标志在入口显式初始化。
 
-运行时只有一个约 1.5 亿参数的字符语言模型，与 Windows 2.1.0 的部署资产一致；长句、短词、补全、短语生成及拼音修正共享同一 ONNX session。ORT 1.20.1 固定 CPU 执行，使用静态 int8 激活范围、float16 embedding 和自定义 TrieAttention。Apple Silicon 使用保留八通道规约顺序的 NEON 内核；修正按真实前文最后 48 个字符和输入音节约束，短语 beam 为 2。长句 Tab 保留 80 ms 结果预算，迟到结果不交付；字符评分支持真实取消。前台和后台仍通过有界锁等待及上下文校验隔离。
+运行时只有一个约 1.5 亿参数的字符语言模型，与 Windows 2.2.0 的部署资产一致；长句、短词、补全、短语生成及拼音修正共享同一 ONNX session。ORT 1.20.1 固定 CPU 执行，使用静态 int8 激活范围、float16 embedding 和自定义 TrieAttention。Apple Silicon 使用保留八通道规约顺序的 NEON 内核；修正按真实前文最后 48 个字符和输入音节约束，短语 beam 为 2。长句 Tab 保留 80 ms 结果预算，迟到结果不交付；字符评分支持真实取消。前台和后台仍通过有界锁等待及上下文校验隔离。
 
 `nc_runtime_paths` 统一解析 bundle 内的运行资源路径，各模型宿主在实际加载文件时使用该解析器。输入法前端以 `cassotis-engine --serve` 启动服务，传入基础词库、用户词库、socket 和父进程参数；`--version` 用于读取引擎版本。
 
-基础数据库只读，用户数据库使用独立可写路径。Lexicon 2.1.0 的 26 个输入通过 schema 24 导入器重建简繁两库，完整保留 query paths、转移、补全竞争/审计和正反字符语言模型，并要求带候选指纹的短词提升表；模型与 schema 的 SHA-256 在 `data/runtime-assets.sha256`，词库生成输入校验值在 `data/lexicon-inputs.json`。
+基础数据库只读，用户数据库使用独立可写路径。Lexicon 2.2.0 的 26 个输入通过 schema 24 导入器重建简繁两库，完整保留 query paths、转移、补全竞争/审计和正反字符语言模型，并要求带候选指纹的短词提升表；模型与 schema 的 SHA-256 在 `data/runtime-assets.sha256`，词库生成输入校验值在 `data/lexicon-inputs.json`。
 
 平台时钟统一为 mach_absolute_time，避免 FPC 默认 Darwin 计时发生系统时钟回退；性能频率由 mach_timebase_info 获取。
 
@@ -95,7 +96,7 @@ helper 在输入源启动时提前启动。socket 尚未连接时，前端最多
 
 首屏全拼没有预测时，`nc_tab_exact_fallback` 可把已输入的两个精确词段拼接为 Tab 结果。头尾都必须是完整词并逐字符合当前音节，明确分隔符不能被重切，重复完整候选不展示；翻页和编辑会失效缓存。确认该结果不新增用户词或补全学习反馈。预测整段使用主题强调色，精确拼接整段使用普通文字色。
 
-结果 schema 3 保留 schema 2 的警告列表，追加补全来源 byte、零保留 byte 和零保留 uint16。来源 1–6 为预测，7 为精确拼接；非空补全才能携带来源。新前端读取 schema 1/2 时把旧非空补全视为预测；清空上下文同时清除来源。升级时前端和引擎一起替换。
+结果 schema 3 保留 schema 2 的警告列表，追加补全来源 byte、零保留 byte 和零保留 uint16。来源 1–6 为预测，7 为精确拼接，8 为自定义短语；非空补全才能携带来源。新前端读取 schema 1/2 时把旧非空补全视为预测；清空上下文同时清除来源。升级时前端和引擎一起替换。
 
 缓存词链复用需要按当前音节逐段验证，五音节也进入精确词链搜索；新快速分支保留有转移证据的四字复合前缀。字符 LM 冷缓存仅补载最多 64 段、每段 40 个 UTF-16 单位；前缀学习使用精确键的有界重复选择证据，先复制缓存候选再排序。
 
@@ -130,3 +131,9 @@ State schema 8 在原 40 字节状态后追加英文识别 Boolean、三个零�
 Result schema 6 追加英文原文与选中状态，长度为 2–32 个 ASCII 字母，不属于中文候选数组。候选 UI 首页在中文 1–9 之前渲染无编号英文项；中文数字键语义不变。消息 19 的页 0、索引 -1 表示英文选择，只接受非删除动作、非空期望文本和空 comment，并核对上下文、快照版本、query 和实际原文。旧快照不能上屏。原生视图 tag -2 对应英文，tag -1 继续表示 Tab 补全。
 
 英文判断使用本地拼写证据与同一共享字符模型，不新增神经模型。用户对英文/中文的选择存入既有最近选择表，英文不形成用户词或中文词频。标点例外只在中文半角输入并使用中文标点时生效；全角、快捷输入、翻页及快捷键仍优先。前端和 helper 随同一应用一起升级。
+
+## 自定义短语
+
+自定义短语由共享引擎按原始字母缩写匹配，使用独立的补全来源且不会被异步预测覆盖。完整有序列表随设置 schema 9 传输，最多 1024 条，每条正文最多 4096 个 UTF-16 单元。空的 GET_STATE 请求读取完整状态；附带 Boolean false 时返回不含短语列表的 schema 8。写入 schema 8 及更早格式时，服务保留已有短语，避免旧客户端或普通模式切换清空配置。
+
+引擎保留不可变配置快照和缩写索引，重复键按列表中第一条生效。字面提交复用不学习的快捷文本路径，保留空格、换行和标点；候选窗仅截短预览，完整正文仍用于提交。列表作为 JSON 在用户 SQLite 配置中按事务保存，清除学习不会删除。AppKit 编辑器将草稿与已保存列表分开，点击“添加短语”或“保存修改”后才写入；取消、失焦或关闭窗口不提交草稿。导入整份校验后追加，日志合并到高级页。v2.2.0 标签建立前，以随源码分发的输入校验清单为准。

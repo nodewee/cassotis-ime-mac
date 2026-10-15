@@ -4,6 +4,7 @@
 #import "CandidateAppearance.h"
 #import "ShortcutRecorder.h"
 #import "RuntimeLog.h"
+#import "CustomPhraseEditor.h"
 
 @interface CassotisSettingsDocument : NSView
 @end
@@ -80,6 +81,7 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
     NSTimer *_loadTimer;
     NSUInteger _loadAttempts;
     cassotis::State _state;
+    CassotisCustomPhraseEditor *_customPhrases;
 }
 + (instancetype)shared { static CassotisSettingsController *v; static dispatch_once_t once; dispatch_once(&once,^{v=[[self alloc] init];}); return v; }
 - (NSPopUpButton *)popup:(NSArray<NSString *> *)titles identifier:(NSString *)identifier {
@@ -141,7 +143,7 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
     window.title=version.length?[NSString stringWithFormat:@"%@ (v%@) - 设置",CassotisProductName(),version]:[CassotisProductName() stringByAppendingString:@" - 设置"];
     window.minSize=NSMakeSize(760,540); window.releasedWhenClosed=NO; window.delegate=self;
     window.autorecalculatesKeyViewLoop=YES; [window center];
-    _sections=[NSMutableArray array]; _sectionNames=@[@"常规",@"外观",@"模糊拼音",@"快捷键",@"日志",@"高级"];
+    _sections=[NSMutableArray array]; _sectionNames=@[@"常规",@"外观",@"模糊拼音",@"快捷键",@"自定义短语",@"高级"];
     NSView *root=[[CassotisSettingsDocument alloc] init]; window.contentView=root;
     NSVisualEffectView *sidebar=[[NSVisualEffectView alloc] init]; sidebar.material=NSVisualEffectMaterialSidebar;
     sidebar.blendingMode=NSVisualEffectBlendingModeBehindWindow; sidebar.state=NSVisualEffectStateFollowsWindowActiveState;
@@ -289,16 +291,32 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
         [self card:@[[self row:@"候选翻页" control:_pageKeys],[self row:@"一键补全" control:_completionKey]]],
         [self hint:@"Command、Ctrl + Space 和 Fn 系统组合键由 macOS 管理。系统输入源切换键可在“系统设置 → 键盘”中调整。"]]];
 
+    _customPhrases=[[CassotisCustomPhraseEditor alloc] init];
+    __weak CassotisSettingsController *weakController=self;
+    _customPhrases.savePhrases=^BOOL(const std::vector<cassotis::CustomPhrase> &phrases) {
+        CassotisSettingsController *controller=weakController;
+        if(!controller || !controller->_ready) return NO;
+        try {
+            cassotis::EngineClient engine;
+            if(!engine.connect(CassotisSocketPath().UTF8String)) throw std::runtime_error("引擎暂不可用，短语尚未保存。");
+            auto state=engine.state(); state.customPhrases=phrases;
+            engine.setState(state); controller->_state=state;
+            controller->_status.stringValue=@"自定义短语已保存。"; return YES;
+        } catch(const std::exception &e) { controller->_status.stringValue=[NSString stringWithUTF8String:e.what()]; return NO; }
+    };
+    [self section:@"自定义短语" views:@[[self card:@[_customPhrases]],
+        [self hint:@"例如 cx → 春眠不觉晓，处处闻啼鸟。缩写不区分大小写，双拼按实际按键匹配；数字候选与空格选词保持不变。可与 Windows 版互相导入、导出。"]]];
+
     NSButton *logs=[NSButton buttonWithTitle:@"打开日志文件夹" target:self action:@selector(openLogs:)];
     _logging=[self check:@"启用日志" identifier:@"logging-enabled"];
     _logging.action=@selector(loggingChanged:);
-    [self section:@"日志" views:@[[self card:@[_logging,
-        [self hint:@"默认关闭。开启后记录启动和运行诊断，开关立即生效并自动保存，不中断输入。关闭后停止写入，已有日志保留。每份日志最多 2 MB，保留上一份记录。"],
-        [self row:@"运行日志" control:logs]]]]];
     NSButton *config=[NSButton buttonWithTitle:@"打开配置文件夹" target:self action:@selector(openConfig:)];
     NSButton *clear=[NSButton buttonWithTitle:@"清除学习记录…" target:self action:@selector(clear:)];
-    [self section:@"高级" views:@[[self card:@[[self row:@"配置工具" control:config],[self row:@"用户词语与学习" control:clear]]],
-        [self hint:@"所有词库学习和模型推理均在本机进行。清除学习记录不会更改设置或删除基础词库。"]]];
+    [self section:@"高级" views:@[[self card:@[_logging,
+        [self hint:@"默认关闭。开启后记录启动和运行诊断，开关立即生效并自动保存，不中断输入。关闭后停止写入，已有日志保留。每份日志最多 2 MB，保留上一份记录。"],
+        [self row:@"运行日志" control:logs]]],
+        [self card:@[[self row:@"配置工具" control:config],[self row:@"用户词语与学习" control:clear]]],
+        [self hint:@"所有词库学习和模型推理均在本机进行。清除学习记录不会更改设置、自定义短语或基础词库。"]]];
 
     NSView *padding=[[NSView alloc] init]; _endPadding=[padding.heightAnchor constraintEqualToConstant:300]; _endPadding.active=YES;
     NSMutableArray *contents=[_sections mutableCopy]; [contents addObject:padding];
@@ -510,6 +528,7 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
     try {
         if(!engine.connect(CassotisSocketPath().UTF8String)) throw std::runtime_error("正在读取设置，请稍候…");
         _state=engine.state(); _ready=YES;
+        [_customPhrases setPhrases:_state.customPhrases];
         _autoEnglish.state=_state.autoEnglish?NSControlStateValueOn:NSControlStateValueOff;
         _punctuationSymbols.stringValue=[NSString stringWithUTF8String:_state.punctuationASCII.c_str()];
         [_scheme selectItemAtIndex:_state.scheme]; [_dictionary selectItemAtIndex:_state.dictionary];
@@ -542,6 +561,7 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
     for(NSButton *control in _shortcutEnabled) control.enabled=_ready;
     for(NSButton *control in _rules) control.enabled=_ready && _fuzzy.state!=0;
     for(NSUInteger i=0;i<_shortcuts.count;++i) _shortcuts[i].enabled=_ready && _shortcutEnabled[i].state!=0;
+    _customPhrases.enabled=_ready;
     _retry.hidden=_ready; _retry.enabled=!_ready;
     [self.window.contentView layoutSubtreeIfNeeded];
     [self windowDidResize:[NSNotification notificationWithName:NSWindowDidResizeNotification object:self.window]];
@@ -606,7 +626,7 @@ static BOOL CassotisSettingsFieldKey(NSControl *control,NSEvent *event) {
     for(CassotisShortcutRecorder *recorder in _shortcuts) [recorder cancelRecording];
 }
 - (BOOL)windowShouldClose:(NSWindow *)sender {
-    [sender makeFirstResponder:nil]; [self fontCommitted:nil]; return YES;
+    [sender makeFirstResponder:nil]; [_customPhrases cancelDraft]; [self fontCommitted:nil]; return YES;
 }
 - (void)openDirectory:(NSString *)relative {
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:relative];
