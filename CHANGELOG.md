@@ -14,6 +14,8 @@
 - Fix `ying`, `jiu` and `bu` to prefer 应/應, 就 and 不 in simplified and traditional Chinese.
 - Do not learn a rejected long-sentence completion when the next key only lengthens or rewrites the last syllable (`jid` → `jidu`, `xia` → `xian`); a key that starts a new syllable still records the rejection.
 - Read a three- to five-syllable phrase that is no dictionary entry as a clause inside a sentence when nothing precedes it, and prefer the dictionary's most frequent words there (`shezhizhong` → 设置中, no longer 射之中).
+- Draft such a phrase from every way its letters read as the same number of syllables and let the language model choose among them (`henganjing` → 很干净, no longer only 恒安静; `nangaode` → 难搞的).
+- Do not remember complete Pinyin committed as letters with Return (`zhengquede`) as the input's choice unless the letters spell an English word or the raw-text candidate was selected, and learn only Chinese text as the answer to a one-key completion.
 - Align with the Windows and Cassotis Lexicon v2.2.0 development snapshots (tags pending), including 67 additional reply, set and repository phrases per script on top of the earlier 389 additions.
 - Replace all eleven neural graphs with one shared character language model for sentence and word selection, completion, phrase generation and Pinyin-constrained correction; remove the retired graphs, indexes, hosts and compact parameters.
 - Improve the first two long-sentence candidates, and make completed long input follow the same candidate path whether entered at once or key by key.
