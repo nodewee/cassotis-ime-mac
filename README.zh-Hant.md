@@ -18,7 +18,7 @@
 
 Cassotis IME macOS 版（言泉輸入法 macOS 版）是一個面向 Apple 晶片 Mac 的實驗性中文拼音輸入法。原生的 InputMethodKit / AppKit 前端與一個以 Free Pascal 撰寫的獨立引擎處理程序通訊；引擎移植自 [Cassotis IME Windows 版](https://github.com/shenmin/cassotis-ime)，詞庫由 [Cassotis Lexicon](https://github.com/shenmin/cassotis-lexicon) 產生。候選排序全部在本機 CPU 上完成，核心是一個由本專案訓練的字元級語言模型。
 
-macOS 2.0.0（build 4）對標 Cassotis IME 與 Cassotis Lexicon v2.2.0：引擎和詞庫跟進已發布的 v2.2.0 標籤；語言模型和緊湊排序單元繼續與 Windows 版共用。它支援 Apple 晶片和 macOS 14 及以上，尚未正式發布；目前正式版為 1.0.0。已驗證的環境和已知限制請見 [COMPATIBILITY.md](COMPATIBILITY.md)，產品介紹請見[官網](https://www.yanquan.org/mac)。
+macOS 2.0.0（build 4）對標 Cassotis IME 與 Cassotis Lexicon v2.2.0：引擎和詞庫跟進已發布的 v2.2.0 標籤；語言模型和緊湊排序單元繼續與 Windows 版共用。它支援 Apple 晶片和 macOS 14 及以上。已驗證的環境和已知限制請見 [COMPATIBILITY.md](COMPATIBILITY.md)，產品介紹請見[官網](https://www.yanquan.org/mac)。
 
 專案目前重點：
 - 與 Windows 版的每個版本保持對齊，並在同一套基準上核對；
@@ -219,7 +219,7 @@ Cassotis IME macOS 版 v0.2.0（build 2）移植 v1.29.0：結合上下文的短
 
 Cassotis IME macOS 版 v1.0.0（build 3）移植 v1.31.0：共用的字元語言模型取代 RBT3 短上下文模型，負責長句、帶上下文的短詞、混合簡拼和 Tab 續寫；短詞補全在背景重排，長句補全比較補完目前的詞、後續短語和預測的後續字。
 
-Cassotis IME macOS 版 v2.0.0（build 4，尚未發布）移植 v2.2.0，以一個字元語言模型和七個緊湊單元取代 11 個神經網路圖。詞庫外三到五個音節的短語由語言模型組成，並對照輸入的拼音修正。新增中文模式下的英文辨識、U/I/V 快捷輸入、數字後的小數點、Markdown 標點組合和依應用程式記住的中英文狀態；糾錯後的分段送出與復原保留原始按鍵，鼻音邊界有歧義時單字仍可選擇。另加入自訂短語、末音節繼續輸入時保留補全，以及無上下文短語評分改進。詞庫在先前 389 個新增項之外，再增加簡繁各 67 個回覆、集合及程式庫用語。
+Cassotis IME macOS 版 v2.0.0（build 4）移植 v2.2.0，以一個字元語言模型和七個緊湊單元取代 11 個神經網路圖。詞庫外三到五個音節的短語由語言模型組成，並對照輸入的拼音修正。新增中文模式下的英文辨識、U/I/V 快捷輸入、數字後的小數點、Markdown 標點組合和依應用程式記住的中英文狀態；糾錯後的分段送出與復原保留原始按鍵，鼻音邊界有歧義時單字仍可選擇。另加入自訂短語、末音節繼續輸入時保留補全，以及無上下文短語評分改進。詞庫在先前 389 個新增項之外，再增加簡繁各 67 個回覆、集合及程式庫用語。
 
 ## 授權
 應用程式碼採用 GPL-3.0 授權，請見 [LICENSE](LICENSE)。隨附的詞庫依 Cassotis Lexicon 的聲明採用 CC BY-SA 4.0 授權。模型、ONNX Runtime 及其他元件的授權條款與來源請見 [NOTICE.md](NOTICE.md)；模型和 schema 的校驗值請見 `data/runtime-assets.sha256`。

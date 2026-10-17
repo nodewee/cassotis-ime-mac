@@ -1,6 +1,6 @@
 # Compatibility
 
-Development version 2.0.0 (build 4), not yet released, targets Apple Silicon and macOS 14 or later. Build and desktop validation used macOS 27.0.1, an Apple M2 Pro, Xcode 27.0 and Free Pascal 3.2.2.
+Version 2.0.0 (build 4) targets Apple Silicon and macOS 14 or later. Build and desktop validation used macOS 27.0.1, an Apple M2 Pro, Xcode 27.0 and Free Pascal 3.2.2.
 
 | Environment | Validation status |
 | --- | --- |

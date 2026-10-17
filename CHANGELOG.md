@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 (build 4, unreleased)
+## 2.0.0 (build 4, 2026-10-17)
 
 - Add an ordered Custom Phrases settings page with explicit Add and Save Changes actions, exact letter shortcuts, literal multiline Tab commits, duplicate priority, and Windows-compatible JSON import/export. Keep numbered candidates and Space unchanged, and protect phrases from asynchronous prediction and learning cleanup.
 - Keep drafts separate from saved custom-phrase rows. Cancelling edits or clearing the form cannot mutate the list; failed writes preserve both the draft and the saved contents.
