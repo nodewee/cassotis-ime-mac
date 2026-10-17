@@ -10,13 +10,13 @@
 ./scripts/check_environment.sh
 ```
 
-词库是独立的 [Cassotis Lexicon](https://github.com/shenmin/cassotis-lexicon) 项目。准备其 v2.2.0 对应生成输入后（当前标签待建立，以 `data/lexicon-inputs.json` 的逐文件校验值为准），用环境变量指定位置，无需放在固定目录或本仓库旁边。标签建立前可检出公开词库提交 `889d8f3c3e7e938c7926cd6e158ee2b91120114f`：
+词库是独立的 [Cassotis Lexicon](https://github.com/shenmin/cassotis-lexicon) 项目。检出其正式发布的 `v2.2.0` 标签后，用环境变量指定位置，无需放在固定目录或本仓库旁边。构建会按 `data/lexicon-inputs.json` 核对输入：
 
 ```sh
 export CASSOTIS_LEXICON_ROOT="/path/to/cassotis-lexicon"
 ```
 
-该目录必须包含 `data/generated/` 下简繁两套共 26 个生成文本。构建时按 `data/lexicon-inputs.json` 验证输入 SHA-256，再导入 schema 24 数据库；基础词条分别为 249,943 / 253,155；带候选指纹的短词提升表为必需输入，不能省略。词库生成过程和许可见词库项目自身的文档。
+该目录必须包含 `data/generated/` 下简繁两套共 26 个生成文本。构建时按 `data/lexicon-inputs.json` 验证输入 SHA-256，再导入 schema 24 数据库；基础词条分别为 257,528 / 260,730；带候选指纹的短词提升表为必需输入，不能省略。词库生成过程和许可见词库项目自身的文档。
 
 一个共享 ONNX 字符模型、词表和拼音读音表已随源码提供。共享字符模型以 `char_lm.onnx.000`、`.001`、`.002`、`.003` 分片保存，构建时按顺序原子合并并验证 SHA-256；合并文件不提交到 Git，安装应用仅携带合并模型。`data/runtime-assets.sha256` 记录模型和数据库 schema 的校验值。首次构建会下载官方 ONNX Runtime 1.20.1 arm64 发行包，核对固定 SHA-256 后解压。已安装的输入法无需编译器、Python、联网推理或另外下载模型。
 

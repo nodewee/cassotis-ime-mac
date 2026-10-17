@@ -1,7 +1,17 @@
 version: 1
-generated_at: "2026-09-23T00:00:00+00:00"
+generated_at: "2026-10-17T00:00:00+00:00"
 profile: external_broad
 sources:
+  - id: chinese-poetry
+    name: chinese-poetry (Classical Chinese poetry database)
+    download_url: https://raw.githubusercontent.com/chinese-poetry/chinese-poetry/master/
+    homepage: https://github.com/chinese-poetry/chinese-poetry
+    license: MIT
+    risk_level: low
+    redistribution_class: permissive
+    attribution_required: true
+    raw_committed: false
+    notes: 'Public-domain poetry texts supplied by the dataset; curated lines support exact matching, partial-input completion and next-line continuation. See CHINESE-POETRY-LICENSE.txt.'
   - id: cc-cedict
     name: CC-CEDICT
     download_url: https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz
